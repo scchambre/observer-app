@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f172a">
+<title>Observer Sheet</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#ffffff; --ink:#101418; --muted:#5b6470; --line:#d7dce3;
+    --accent:#0b62d6; --accent2:#0a4fae; --ok:#0a8a3f; --warn:#c47f00; --bad:#c62828;
+    --chip:#eef1f5; --shade:#dfe4ea;
+    --r:14px; --tap:54px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; overscroll-behavior:none;}
+  body{padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);}
+  .app{max-width:560px;margin:0 auto;padding:0 12px 110px;}
+  h1,h2,h3{margin:0;font-weight:700;}
+  button{font-family:inherit;font-size:16px;cursor:pointer;border:none;background:none;color:inherit;}
+  input,select,textarea{font-family:inherit;font-size:16px;width:100%;padding:10px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;color:var(--ink);}
+  input[type=checkbox]{width:auto;}
+  label.fld{display:block;margin:8px 0;}
+  label.fld>span{display:block;font-size:12px;font-weight:600;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
+  .row{display:flex;gap:8px;}
+  .row>*{flex:1;min-width:0;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+    padding:14px;margin:12px 0;box-shadow:0 1px 2px rgba(16,20,24,.04);}
+  .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px;}
+  .btn{display:flex;align-items:center;justify-content:center;min-height:var(--tap);border-radius:12px;
+    font-weight:700;background:var(--chip);border:1px solid var(--line);padding:0 14px;}
+  .btn:active{transform:scale(.98);}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent2);}
+  .btn.danger{background:#fff;color:var(--bad);border-color:#e0b4b4;}
+  .btn.ghost{background:#fff;}
+  .btn.sm{min-height:42px;font-size:14px;font-weight:600;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+
+  /* Top status bar */
+  .topbar{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0 6px;
+    border-bottom:1px solid var(--line);margin:0 -12px 0;padding-left:12px;padding-right:12px;}
+  .caps{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .capchip{flex:0 0 auto;background:var(--chip);border:1px solid var(--line);border-radius:999px;
+    padding:6px 11px;font-size:12.5px;font-weight:600;white-space:nowrap;display:flex;gap:6px;align-items:center;}
+  .capchip b{font-variant-numeric:tabular-nums;}
+  .capchip.hot{background:#fff3e0;border-color:#f0c98a;color:#8a5a00;}
+  .capchip.fired{background:#fdecec;border-color:#e7a9a9;color:var(--bad);}
+
+  /* Score */
+  .scorewrap{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:stretch;}
+  .teamcard{background:var(--panel);border:2px solid var(--line);border-radius:var(--r);padding:10px;text-align:center;}
+  .teamcard .tname{font-weight:800;font-size:16px;line-height:1.1;word-break:break-word;}
+  .teamcard .tmeta{font-size:11px;color:var(--muted);margin-top:2px;min-height:14px;}
+  .teamcard .tscore{font-size:46px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;margin:4px 0 8px;}
+  .teamcard.recv{outline:3px solid var(--accent);outline-offset:-2px;}
+  .swatch{display:inline-block;width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.25);vertical-align:middle;margin-right:4px;}
+  .vs{display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);font-weight:700;font-size:13px;}
+  .scoreplus{width:100%;}
+
+  /* Timer */
+  .timer{text-align:center;padding:14px 10px 12px;border-radius:var(--r);border:2px solid var(--line);background:var(--panel);}
+  .timer.run{border-color:var(--accent);}
+  .timer.warnear{border-color:var(--warn);background:#fff8ec;}
+  .timer.over{border-color:var(--bad);background:#fff0f0;}
+  .timer .role{font-size:13px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);}
+  .timer .big{font-size:74px;font-weight:800;font-variant-numeric:tabular-nums;line-height:.95;margin:2px 0;}
+  .timer.over .big{color:var(--bad);}
+  .timer .sub{font-size:13px;color:var(--muted);min-height:18px;}
+  .miles{display:flex;gap:6px;justify-content:center;margin-top:8px;flex-wrap:wrap;}
+  .mile{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--chip);border:1px solid var(--line);color:var(--muted);}
+  .mile.done{background:#e7f3ea;border-color:#bcdcc4;color:var(--ok);}
+  .mile.cur{background:var(--accent);border-color:var(--accent2);color:#fff;}
+
+  .seg{display:flex;background:var(--chip);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  .seg button{flex:1;min-height:46px;font-weight:700;font-size:14px;}
+  .seg button.on{background:var(--accent);color:#fff;}
+
+  /* Tabs */
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--panel);
+    border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom));}
+  .tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--muted);padding:6px 2px;border-radius:10px;}
+  .tabbar button .ic{font-size:20px;line-height:1;}
+  .tabbar button.on{color:var(--accent);background:#eef4fe;}
+  .page{display:none;}
+  .page.on{display:block;}
+
+  .stepper{display:flex;align-items:center;gap:8px;}
+  .stepper button{width:40px;height:40px;border-radius:10px;background:var(--chip);border:1px solid var(--line);font-size:22px;font-weight:700;}
+  .stepper .val{min-width:30px;text-align:center;font-weight:800;font-size:20px;font-variant-numeric:tabular-nums;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.4px;}
+  tr.shade td{background:var(--shade);}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--chip);border:1px solid var(--line);}
+  .pill.w{background:#fbe9f3;border-color:#eac4d9;}
+  .pill.m{background:#e8eefb;border-color:#c4d2ef;}
+  .muted{color:var(--muted);}
+  .small{font-size:12.5px;}
+  .hr{height:1px;background:var(--line);margin:12px 0;border:0;}
+  .warnrow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);}
+  .warnrow:last-child{border-bottom:0;}
+  .tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--chip);border:1px solid var(--line);}
+  .tag.tech{background:#eef2f7;}
+  .tag.tmf{background:#e6effb;border-color:#bcd3f0;color:#0a4fae;}
+  .tag.pmf{background:#fff7df;border-color:#ecd99a;color:#7a5c00;}
+  .tag.ejct{background:#fdecec;border-color:#e7a9a9;color:var(--bad);}
+  .flash{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100;background:#101418;color:#fff;
+    padding:12px 18px;border-radius:12px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);opacity:0;pointer-events:none;
+    transition:opacity .2s;max-width:90%;text-align:center;}
+  .flash.show{opacity:1;}
+  .help{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
+  details summary{font-weight:700;cursor:pointer;padding:6px 0;}
+  .miniscore{font-variant-numeric:tabular-nums;font-weight:800;}
+  .danger-text{color:var(--bad);}
+  .ok-text{color:var(--ok);}
+</style>
+</head>
+<body>
+<div class="flash" id="flash"></div>
+<div class="app">
+
+  <!-- ===== TOP STATUS BAR ===== -->
+  <div class="topbar">
+    <div class="caps" id="caps"></div>
+  </div>
+
+  <!-- ===== TIMER PAGE ===== -->
+  <section class="page on" id="page-game">
+
+    <div class="scorewrap" style="margin-top:12px">
+      <div class="teamcard" id="tc0">
+        <div class="tname" id="tn0">Team 1</div>
+        <div class="tmeta" id="tm0"></div>
+        <div class="tscore" id="ts0">0</div>
+        <button class="btn primary scoreplus" data-score="0">+ Goal</button>
+      </div>
+      <div class="vs">
+        <div id="halfLbl">H1</div>
+        <div style="font-size:11px;margin-top:6px" class="muted" id="ptLbl">Pt 1</div>
+      </div>
+      <div class="teamcard" id="tc1">
+        <div class="tname" id="tn1">Team 2</div>
+        <div class="tmeta" id="tm1"></div>
+        <div class="tscore" id="ts1">0</div>
+        <button class="btn primary scoreplus" data-score="1">+ Goal</button>
+      </div>
+    </div>
+
+    <div class="panel" style="padding:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+        <div class="small muted">Ratio this point</div>
+        <div id="ratioNow"><span class="pill">—</span></div>
+      </div>
+      <div class="timer" id="timerBox">
+        <div class="role" id="timerRole">No point in progress</div>
+        <div class="big" id="timerBig">—:—</div>
+        <div class="sub" id="timerSub">Tap “+ Goal” for the team that just scored to start the between-point clock.</div>
+        <div class="miles" id="miles"></div>
+      </div>
+
+      <div class="grid3" style="margin-top:10px">
+        <button class="btn sm ghost" id="btnReady">Readiness ✋</button>
+        <button class="btn sm ghost" id="btnLate20">Late ready →20s</button>
+        <button class="btn sm ghost" id="btnRepull">Re-pull</button>
+      </div>
+      <div class="grid3" style="margin-top:8px">
+        <button class="btn sm ghost" id="btnOffside">Offsides</button>
+        <button class="btn sm ghost" id="btnFalse">False start</button>
+        <button class="btn sm ghost" id="btnTimeV">Time viol.</button>
+      </div>
+      <div class="grid3" style="margin-top:8px">
+        <button class="btn sm ghost" id="btnTimeout">Timeout</button>
+        <button class="btn sm ghost" id="btnStop">Stop clock</button>
+        <button class="btn sm ghost" id="btnUndo">Undo goal</button>
+      </div>
+    </div>
+
+    <div class="panel" style="padding:10px">
+      <div class="small muted" style="margin-bottom:6px">I am the observer timing:</div>
+      <div class="seg" id="myteamSeg">
+        <button data-myteam="0" id="seg0">Team 1</button>
+        <button data-myteam="1" id="seg1">Team 2</button>
+      </div>
+      <div class="help">Your clock shows <b>80s</b> when your team scored (they pull) and <b>60s</b> when your team conceded (they receive). The other observer times the opposite team.</div>
+    </div>
+
+    <details class="panel" style="padding:10px">
+      <summary>Auxiliary clocks (timeout / halftime / disc-in)</summary>
+      <div class="grid2" style="margin-top:8px">
+        <button class="btn sm ghost" data-aux="70">Timeout 70s</button>
+        <button class="btn sm ghost" data-aux="420">Halftime 7:00</button>
+        <button class="btn sm ghost" data-aux="20">Disc-in 20s</button>
+        <button class="btn sm ghost" data-aux="10">Disc-in 10s</button>
+      </div>
+      <div class="help">These run in the same clock display. Halftime gives 5-min &amp; 2-min calls.</div>
+    </details>
+  </section>
+
+  <!-- ===== SETUP PAGE ===== -->
+  <section class="page" id="page-setup">
+    <div class="panel">
+      <h2>Match info</h2>
+      <div class="row"><label class="fld"><span>Event</span><input id="f_event"></label>
+        <label class="fld"><span>Organizer</span><input id="f_org"></label></div>
+      <div class="row"><label class="fld"><span>Division</span><input id="f_div" placeholder="Mixed"></label>
+        <label class="fld"><span>Date</span><input id="f_date" type="date"></label></div>
+      <label class="fld"><span>Round / Match type</span>
+        <select id="f_round">
+          <option value="">—</option><option>Pool Play</option><option>Power Pool</option>
+          <option>X-Over</option><option>Consolation</option><option>Pre-Quarter</option>
+          <option>Quarter</option><option>Semi</option><option>Final</option>
+        </select></label>
+      <div class="row"><label class="fld"><span>Field</span><input id="f_field"></label>
+        <label class="fld"><span>Start time</span><input id="f_start" type="time"></label></div>
+      <div class="help">Start time is used to compute wall-clock cap alerts.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Format &amp; caps</h2>
+      <div class="row">
+        <label class="fld"><span>Game total (goals)</span><input id="f_gametotal" type="number" inputmode="numeric" value="15"></label>
+        <label class="fld"><span>Halftime target</span><input id="f_halftarget" type="number" inputmode="numeric"></label>
+      </div>
+      <div class="grid3">
+        <label class="fld"><span>Half cap (min)</span><input id="f_halfcap" type="number" inputmode="numeric"></label>
+        <label class="fld"><span>Soft cap (min)</span><input id="f_softcap" type="number" inputmode="numeric"></label>
+        <label class="fld"><span>Hard cap (min)</span><input id="f_hardcap" type="number" inputmode="numeric"></label>
+      </div>
+      <div class="help">Leave blank to disable a cap. Caps are minutes after the start time. You'll get an on-screen + sound + vibrate alert when each is reached.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Timeouts &amp; time limits</h2>
+      <div class="grid3">
+        <label class="fld"><span>TOs / half</span><input id="f_to_half" type="number" inputmode="numeric" value="2"></label>
+        <label class="fld"><span>Floater TOs</span><input id="f_to_float" type="number" inputmode="numeric" value="0"></label>
+        <label class="fld"><span>TO length (s)</span><input id="f_to_len" type="number" inputmode="numeric" value="70"></label>
+      </div>
+      <details><summary class="small">Advanced: between-point limits (s)</summary>
+        <div class="grid3" style="margin-top:6px">
+          <label class="fld"><span>Line-up</span><input id="f_lim_line" type="number" value="50"></label>
+          <label class="fld"><span>Readiness</span><input id="f_lim_ready" type="number" value="60"></label>
+          <label class="fld"><span>Pull</span><input id="f_lim_pull" type="number" value="80"></label>
+        </div>
+        <div class="grid3">
+          <label class="fld"><span>Late-ready pull</span><input id="f_lim_late" type="number" value="20"></label>
+          <label class="fld"><span>Re-pull ready</span><input id="f_lim_rpr" type="number" value="20"></label>
+          <label class="fld"><span>Re-pull pull</span><input id="f_lim_rpp" type="number" value="40"></label>
+        </div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2>Gender ratio</h2>
+      <label class="fld"><span>Method</span>
+        <select id="f_ratiomethod">
+          <option value="ABBA">Prescribed ABBA (auto)</option>
+          <option value="manual">Manual each point</option>
+        </select></label>
+      <label class="fld"><span>Point 1 majority (the “A”)</span>
+        <select id="f_ratioA">
+          <option value="W">4 women-matching / 3 men-matching</option>
+          <option value="M">4 men-matching / 3 women-matching</option>
+        </select></label>
+      <div class="help">ABBA: pt1 = A, pts 2–3 = reverse, pts 4–5 = A … repeating every two points. Halftime does not reset it.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Teams</h2>
+      <div id="teamSetup"></div>
+      <label class="fld" style="margin-top:10px"><span>Field side labels (venue-specific)</span>
+        <div class="row"><input id="f_sideA" placeholder="e.g. Scoreboard / North"><input id="f_sideB" placeholder="e.g. Far / South"></div></label>
+      <div class="help">These labels appear in the “started on side” pickers below and on the sheet.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Alerts</h2>
+      <label class="fld" style="display:flex;align-items:center;gap:10px"><input type="checkbox" id="f_sound" checked style="width:auto"><span style="margin:0">Sound + vibrate on warnings &amp; caps</span></label>
+      <button class="btn sm ghost" id="btnNotif" style="margin-top:8px">Enable system notifications</button>
+      <div class="help">System notifications can alert you even if the screen is in another app (browser permitting). Sound/vibrate always works while the tab is open.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Game data</h2>
+      <div class="grid2">
+        <button class="btn sm ghost" id="btnExport">Export JSON</button>
+        <button class="btn sm ghost" id="btnImport">Import JSON</button>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <button class="btn sm ghost" id="btnCopy">Copy summary</button>
+        <button class="btn sm danger" id="btnReset">New game / reset</button>
+      </div>
+      <input type="file" id="fileImport" accept="application/json" style="display:none">
+    </div>
+  </section>
+
+  <!-- ===== LOG PAGE ===== -->
+  <section class="page" id="page-log">
+    <div class="panel">
+      <h2>Score progression</h2>
+      <div id="historyWrap"><p class="muted small">No points yet.</p></div>
+    </div>
+
+    <div class="panel">
+      <h2>Warnings (pull violations &amp; time)</h2>
+      <div id="warnTable"></div>
+      <div class="help">Offsides + false start + majority-pull = “pull violations”. First in each category is a warning; repeats escalate per rules.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Misconduct &amp; cards</h2>
+      <div id="cardTable"></div>
+      <div class="hr"></div>
+      <div class="row" style="align-items:flex-end">
+        <label class="fld" style="flex:1.2"><span>Type</span>
+          <select id="card_type"><option value="TECH">Technical foul</option><option value="TMF">Team misconduct (Blue)</option><option value="PMF">Personal misconduct (Yellow)</option><option value="EJCT">Ejection (Red)</option></select></label>
+        <label class="fld"><span>Team</span><select id="card_team"></select></label>
+      </div>
+      <label class="fld"><span>Player name / # &amp; reason</span><input id="card_player" placeholder="#7 Alex — taunting"></label>
+      <button class="btn sm primary" id="btnAddCard">Add record</button>
+    </div>
+
+    <div class="panel">
+      <h2>Timeouts used</h2>
+      <div id="toTable"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Notes — incidents, weather, etc.</h2>
+      <textarea id="f_notes" rows="5" placeholder="Notable incidents, injuries, weather, spirit issues…"></textarea>
+    </div>
+  </section>
+
+  <!-- ===== SHEET PAGE ===== -->
+  <section class="page" id="page-sheet">
+    <div class="panel" id="sheetWrap"></div>
+    <div class="grid2">
+      <button class="btn sm ghost" id="btnCopy2">Copy summary</button>
+      <button class="btn sm ghost" id="btnPrint">Print / PDF</button>
+    </div>
+  </section>
+
+</div>
+
+<!-- ===== TAB BAR ===== -->
+<nav class="tabbar" id="tabbar">
+  <button data-tab="game" class="on"><span class="ic">⏱</span>Timer</button>
+  <button data-tab="setup"><span class="ic">⚙︎</span>Setup</button>
+  <button data-tab="log"><span class="ic">▤</span>Log</button>
+  <button data-tab="sheet"><span class="ic">▦</span>Sheet</button>
+</nav>
+
+<script>
+"use strict";
+/* ============================ STATE ============================ */
+const KEY='uc_observer_v1';
+const DEF=()=>({
+  meta:{event:'',org:'',div:'Mixed',round:'',date:'',field:'',start:''},
+  fmt:{gameTotal:15,halfTarget:8,halfCap:null,softCap:null,hardCap:null},
+  to:{perHalf:2,floater:0,len:70},
+  lim:{line:50,ready:60,pull:80,late:20,rpr:20,rpp:40},
+  ratio:{method:'ABBA',A:'W'},
+  sideLabels:['Side A','Side B'],
+  teams:[
+    {name:'Team 1',colour:'',captain:'',spirit:'',startOD:'',startSide:''},
+    {name:'Team 2',colour:'',captain:'',spirit:'',startOD:'',startSide:''}
+  ],
+  myTeam:0,
+  sound:true,
+  score:[0,0],
+  half:1,
+  points:[],            // {n,by,ratio,after:[a,b],dur,viol:[]}
+  warn:{offside:[0,0],falsestart:[0,0],time:[0,0]},
+  cards:[],             // {type,team,player,ts,score:[a,b]}
+  capsFired:{half:false,soft:false,hard:false},
+  notes:''
+});
+let S=load();
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.teams)return Object.assign(DEF(),v);}catch(e){}return DEF();}
+function save(){localStorage.setItem(KEY,JSON.stringify(S));}
+
+/* ============================ TIMER ENGINE ============================ */
+// timer object kept in memory but persisted lightly so reloads continue.
+let T=loadTimer();           // {startMs, base, mode, label, role, milestones:[{at,label}], warnedAt:[], stopped, endless}
+function loadTimer(){try{const v=JSON.parse(localStorage.getItem(KEY+'_t'));if(v)return v;}catch(e){}return null;}
+function saveTimer(){if(T)localStorage.setItem(KEY+'_t',JSON.stringify(T));else localStorage.removeItem(KEY+'_t');}
+
+function startTimer(base,role,label,milestones,opts){
+  opts=opts||{};
+  T={startMs:Date.now(),base,role,label,milestones:milestones||[],warned:[],stopped:false,
+     warnTeam:opts.warnTeam, aux:!!opts.aux};
+  saveTimer();renderTimer();
+}
+function stopTimer(){if(T){T.stopped=true;T.stopElapsed=elapsed();}saveTimer();renderTimer();}
+function clearTimer(){T=null;saveTimer();renderTimer();}
+function elapsed(){if(!T)return 0;if(T.stopped)return T.stopElapsed||0;return (Date.now()-T.startMs)/1000;}
+
+/* ============================ HELPERS ============================ */
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+function fmtClock(sec){const neg=sec<0;sec=Math.abs(Math.round(sec));const m=Math.floor(sec/60),s=sec%60;return (neg?'+':'')+m+':'+String(s).padStart(2,'0');}
+function teamName(i){return (S.teams[i].name||('Team '+(i+1)));}
+function ratioLabel(code){return code==='W'?'4W / 3M':'4M / 3W';}
+function ratioForPoint(n){ // n = 1-indexed point number
+  if(S.ratio.method!=='ABBA')return null;
+  const A=S.ratio.A,B=A==='W'?'M':'W';
+  return (Math.floor(n/2)%2===0)?A:B;
+}
+function pointNo(){return S.score[0]+S.score[1]+1;}
+function flash(msg){const f=$('#flash');f.textContent=msg;f.classList.add('show');clearTimeout(f._t);f._t=setTimeout(()=>f.classList.remove('show'),2600);}
+
+/* sound + vibrate */
+let AC;
+function beep(times=1,freq=880){
+  if(!S.sound)return;
+  try{navigator.vibrate&&navigator.vibrate(times>1?[120,80,120,80,120]:[160]);}catch(e){}
+  try{
+    AC=AC||new (window.AudioContext||window.webkitAudioContext)();
+    if(AC.state==='suspended')AC.resume();
+    for(let i=0;i<times;i++){
+      const o=AC.createOscillator(),g=AC.createGain();
+      o.type='sine';o.frequency.value=freq;o.connect(g);g.connect(AC.destination);
+      const t0=AC.currentTime+i*0.28;
+      g.gain.setValueAtTime(0.0001,t0);g.gain.exponentialRampToValueAtTime(0.4,t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+0.22);
+      o.start(t0);o.stop(t0+0.24);
+    }
+  }catch(e){}
+}
+let notifOK=false;
+function notify(title,body){
+  if(notifOK&&document.hidden){try{new Notification(title,{body,tag:'obs',renotify:true});}catch(e){}}
+}
+
+/* ============================ SCORING ============================ */
+function addGoal(by){
+  const n=pointNo();
+  const r=ratioForPoint(n);
+  S.score[by]++;
+  S.points.push({n,by,ratio:r,after:[...S.score],dur:Math.round(elapsed()&&!T?0:0),viol:[]});
+  // record duration of the *previous* between-point clock if it was running for this scoring? We instead time forward.
+  // halftime check
+  if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget)){
+    S.half=2; flash('Halftime target reached'); beep(2,660); notify('Halftime','Target '+S.fmt.halfTarget+' reached');
+  }
+  // game end check
+  if(S.score[0]>=S.fmt.gameTotal || S.score[1]>=S.fmt.gameTotal){
+    flash('Game total reached — game point/over'); beep(3,990);
+  }
+  save();
+  startBetweenPoint(by);
+  renderAll();
+}
+function startBetweenPoint(scoredBy){
+  // The team that scored becomes the pulling team. My role depends on whether my team scored.
+  const myScored = (scoredBy===S.myTeam);
+  if(myScored){
+    // my team pulls -> 80s pull clock
+    startTimer(S.lim.pull,'PULL — '+teamName(S.myTeam),'to pull',
+      [{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'ready '+S.lim.ready},{at:S.lim.pull,label:'PULL '+S.lim.pull}],
+      {warnTeam:S.myTeam});
+  }else{
+    // my team receives -> 60s readiness clock
+    startTimer(S.lim.ready,'READY — '+teamName(S.myTeam),'to signal readiness',
+      [{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'READY '+S.lim.ready}],
+      {warnTeam:S.myTeam});
+  }
+}
+function undoGoal(){
+  if(!S.points.length){flash('Nothing to undo');return;}
+  const p=S.points.pop();
+  S.score[p.by]--;
+  // recompute half
+  S.half=(S.score[0]>=S.fmt.halfTarget||S.score[1]>=S.fmt.halfTarget)?2:1;
+  // re-evaluate: if we dropped back below, allow half=1 only if neither side already triggered earlier... keep simple
+  clearTimer();save();renderAll();flash('Goal undone');
+}
+
+/* ============================ TIMER ACTIONS ============================ */
+function actLate20(){startTimer(S.lim.late,'PULL — late ready','to pull (20s)',[{at:S.lim.late,label:'PULL '+S.lim.late}],{warnTeam:S.myTeam});flash('Reset: 20s to pull after late readiness');}
+function actRepull(){
+  const myScored = T && T.role && T.role.startsWith('PULL');
+  // re-pull: receiving 20s ready, pulling 40s pull. Show whichever applies to my role.
+  if(myScored){startTimer(S.lim.rpp,'RE-PULL — pull','to re-pull',[{at:S.lim.rpr,label:'ready '+S.lim.rpr},{at:S.lim.rpp,label:'PULL '+S.lim.rpp}],{warnTeam:S.myTeam});}
+  else{startTimer(S.lim.rpr,'RE-PULL — ready','to signal readiness',[{at:S.lim.rpr,label:'READY '+S.lim.rpr}],{warnTeam:S.myTeam});}
+  flash('Re-pull timing started');
+}
+function actReady(){
+  // receiving team signaled readiness. If I'm timing the receiving team, my obligation is met.
+  if(T && T.role && T.role.startsWith('READY')){
+    clearTimer();flash('Readiness signaled — clock cleared');
+  }else if(T && T.role && T.role.startsWith('PULL')){
+    // other team just got ready; pulling team now has 20s if it was late
+    if(elapsed()>=S.lim.ready){actLate20();}
+    else flash('Noted — pull still due at '+S.lim.pull+'s');
+  }else{flash('No clock running');}
+}
+function logViol(kind){
+  // kind: offside / falsestart / time
+  const team = (kind==='offside')? other(S.myTeam) : S.myTeam; // offsides = pulling team (the team that scored = my team if PULL)
+  // Better: attribute by current role. offsides -> pulling team; false start -> receiving team; time -> per situation, ask team.
+  let t;
+  if(kind==='offside'){t = pullingTeam();}
+  else if(kind==='falsestart'){t = receivingTeam();}
+  else {t = S.myTeam;}
+  if(t==null)t=S.myTeam;
+  S.warn[kind][t]++;
+  const label={offside:'Offsides',falsestart:'False start',time:'Time violation'}[kind];
+  // attach to current point if exists
+  if(S.points.length)S.points[S.points.length-1].viol.push(label+' ('+teamName(t)+')');
+  beep(1,520);flash(label+' — '+teamName(t));
+  if(kind==='time'){
+    // after a time-violation warning, reset to the "after warning" timing: 20s ready / 40s? Manual reset offered:
+    startTimer(S.lim.rpp,'AFTER WARNING','to pull (reset)',[{at:S.lim.rpr,label:'ready '+S.lim.rpr},{at:S.lim.rpp,label:'PULL '+S.lim.rpp}],{warnTeam:t});
+  }
+  save();renderAll();
+}
+function other(i){return i===0?1:0;}
+function pullingTeam(){ // team that scored the last point
+  if(!S.points.length)return null; return S.points[S.points.length-1].by;
+}
+function receivingTeam(){const p=pullingTeam();return p==null?null:other(p);}
+
+function actTimeout(){
+  // record a timeout for a team
+  const t=pickTeamPrompt('Timeout for which team?');
+  if(t==null)return;
+  const half=S.half;
+  S.cards; // noop
+  S._toLog=S._toLog||[];
+  S._toLog.push({team:t,half,ts:Date.now(),score:[...S.score]});
+  // start 70s timeout clock
+  startTimer(S.to.len,'TIMEOUT — '+teamName(t),'timeout',[{at:S.to.len,label:'TO '+S.to.len}],{aux:true});
+  beep(1,660);flash('Timeout — '+teamName(t));
+  save();renderAll();
+}
+function pickTeamPrompt(q){
+  const a=teamName(0),b=teamName(1);
+  const r=prompt(q+'\n1 = '+a+'\n2 = '+b,'1');
+  if(r==null)return null;const n=parseInt(r,10);return (n===1)?0:(n===2)?1:null;
+}
+
+/* ============================ RENDER ============================ */
+function renderAll(){renderTopScore();renderTimer();renderCaps();renderHistory();renderWarn();renderCards();renderTO();renderSheet();renderMyTeam();save();}
+
+function renderTopScore(){
+  $('#tn0').textContent=teamName(0);$('#tn1').textContent=teamName(1);
+  $('#ts0').textContent=S.score[0];$('#ts1').textContent=S.score[1];
+  $('#tm0').innerHTML=teamMeta(0);$('#tm1').innerHTML=teamMeta(1);
+  $('#halfLbl').textContent='H'+S.half;
+  $('#ptLbl').textContent='Pt '+pointNo();
+  const r=ratioForPoint(pointNo());
+  $('#ratioNow').innerHTML = r? `<span class="pill ${r==='W'?'w':'m'}">${ratioLabel(r)}</span>` :
+    `<span class="pill">manual</span>`;
+  // highlight receiving team (the one that did NOT score last)
+  $('#tc0').classList.toggle('recv',receivingTeam()===0);
+  $('#tc1').classList.toggle('recv',receivingTeam()===1);
+  // colour swatch border
+  applyColour(0);applyColour(1);
+}
+function teamMeta(i){
+  const t=S.teams[i];const bits=[];
+  if(t.colour)bits.push(`<span class="swatch" style="background:${cssColour(t.colour)}"></span>${esc(t.colour)}`);
+  if(t.startOD)bits.push('start '+t.startOD);
+  return bits.join(' · ');
+}
+function applyColour(i){const t=S.teams[i];const el=$('#tc'+i);el.style.borderColor=t.colour?cssColour(t.colour):'var(--line)';}
+function cssColour(name){const c=(name||'').trim().toLowerCase();
+  const map={white:'#ffffff',black:'#222',red:'#e53935',blue:'#1e88e5',navy:'#1a237e',green:'#2e7d32',yellow:'#fdd835',orange:'#fb8c00',purple:'#8e24aa',pink:'#ec407a',grey:'#9e9e9e',gray:'#9e9e9e',teal:'#00897b',maroon:'#7b1f2b',gold:'#d4af37',lime:'#c0ca33',cyan:'#00acc1'};
+  if(map[c])return map[c];if(/^#|rgb/.test(c))return name;return '#cfd6df';}
+
+function renderMyTeam(){
+  $('#seg0').classList.toggle('on',S.myTeam===0);
+  $('#seg1').classList.toggle('on',S.myTeam===1);
+  $('#seg0').textContent=teamName(0);$('#seg1').textContent=teamName(1);
+}
+
+function renderTimer(){
+  const box=$('#timerBox');
+  if(!T){box.className='timer';$('#timerRole').textContent='No point in progress';
+    $('#timerBig').textContent='—:—';$('#timerSub').textContent='Tap “+ Goal” for the team that just scored to start the clock.';$('#miles').innerHTML='';return;}
+  const e=elapsed();const rem=T.base-e;
+  $('#timerRole').textContent=T.role;
+  $('#timerBig').textContent=fmtClock(rem);
+  let sub;
+  if(rem>0)sub=Math.ceil(rem)+'s '+T.label;
+  else sub='OVER by '+fmtClock(-rem).replace('+','')+' — '+(T.aux?'time up':'time violation possible');
+  $('#timerSub').textContent=sub;
+  // class
+  box.className='timer run';
+  if(rem<=0)box.classList.add('over');
+  else if(rem<=12)box.classList.add('warnear');
+  if(T.stopped){box.classList.add('warnear');$('#timerRole').textContent=T.role+' (stopped)';}
+  // milestones
+  $('#miles').innerHTML=(T.milestones||[]).map(m=>{
+    const cls=e>=m.at?'done':(rem>0 && m.at===nextMile(e)?'cur':'');
+    return `<span class="mile ${cls}">${m.label}</span>`;
+  }).join('');
+}
+function nextMile(e){if(!T)return -1;for(const m of T.milestones){if(e<m.at)return m.at;}return -1;}
+
+function renderCaps(){
+  const wrap=$('#caps');const chips=[];
+  // wall clock
+  const now=new Date();
+  chips.push(`<span class="capchip"><span>🕑</span><b>${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</b></span>`);
+  const startMs=startWallMs();
+  function capChip(label,min,firedKey){
+    if(min==null||min==='')return '';
+    let cls='capchip',txt;
+    if(startMs){
+      const target=startMs+min*60000;const diff=(target-Date.now())/1000;
+      if(diff<=0){cls+=' fired';txt='reached';}
+      else{txt='in '+fmtClock(diff);if(diff<=600)cls+=' hot';}
+    }else txt=min+'m';
+    return `<span class="${cls}"><span>${label}</span><b>${txt}</b></span>`;
+  }
+  chips.push(capChip('Half',S.fmt.halfCap,'half'));
+  chips.push(capChip('Soft',S.fmt.softCap,'soft'));
+  chips.push(capChip('Hard',S.fmt.hardCap,'hard'));
+  wrap.innerHTML=chips.filter(Boolean).join('');
+}
+function startWallMs(){
+  if(!S.meta.start)return null;
+  const d=S.meta.date?new Date(S.meta.date+'T00:00'):new Date();
+  const [h,m]=S.meta.start.split(':').map(Number);
+  d.setHours(h,m,0,0);return d.getTime();
+}
+
+function renderHistory(){
+  const w=$('#historyWrap');
+  if(!S.points.length){w.innerHTML='<p class="muted small">No points yet.</p>';return;}
+  let rows=S.points.map(p=>{
+    const shade = p.ratio==='M'; // shade one ratio for visual ABBA like the sheet
+    const rp = p.ratio?`<span class="pill ${p.ratio==='W'?'w':'m'}">${p.ratio==='W'?'4W':'4M'}</span>`:'';
+    const v=p.viol&&p.viol.length?`<div class="small danger-text">${p.viol.map(esc).join(', ')}</div>`:'';
+    return `<tr class="${shade?'shade':''}"><td>${p.n}</td><td><b>${esc(teamName(p.by))}</b>${v}</td>
+      <td class="miniscore">${p.after[0]}–${p.after[1]}</td><td>${rp}</td></tr>`;
+  }).reverse().join('');
+  w.innerHTML=`<table><thead><tr><th>Pt</th><th>Scored by</th><th>Score</th><th>Ratio</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderWarn(){
+  const W=S.warn;
+  const cat=[['offside','Offsides (pulling)'],['falsestart','False start (receiving)'],['time','Time violation']];
+  let html=cat.map(([k,lbl])=>`
+    <div class="warnrow">
+      <div><div style="font-weight:700">${lbl}</div><div class="small muted">${teamName(0)}: ${W[k][0]} · ${teamName(1)}: ${W[k][1]}</div></div>
+      <div style="display:flex;gap:6px">
+        ${warnStep(k,0)}${warnStep(k,1)}
+      </div>
+    </div>`).join('');
+  $('#warnTable').innerHTML=html;
+}
+function warnStep(k,t){
+  return `<div class="stepper">
+    <button onclick="bumpWarn('${k}',${t},-1)">−</button>
+    <span class="val" title="${esc(teamName(t))}">${S.warn[k][t]}</span>
+    <button onclick="bumpWarn('${k}',${t},1)">+</button></div>`;
+}
+window.bumpWarn=(k,t,d)=>{S.warn[k][t]=Math.max(0,S.warn[k][t]+d);save();renderWarn();renderSheet();};
+
+function renderCards(){
+  const sel=$('#card_team');if(sel.options.length!==2){sel.innerHTML=`<option value="0">${esc(teamName(0))}</option><option value="1">${esc(teamName(1))}</option>`;}
+  else{sel.options[0].textContent=teamName(0);sel.options[1].textContent=teamName(1);}
+  if(!S.cards.length){$('#cardTable').innerHTML='<p class="muted small">No misconduct records.</p>';return;}
+  const tagcls={TECH:'tech',TMF:'tmf',PMF:'pmf',EJCT:'ejct'};
+  const tagtxt={TECH:'TECH',TMF:'BLUE',PMF:'YELLOW',EJCT:'RED'};
+  $('#cardTable').innerHTML=`<table><tbody>${S.cards.map((c,i)=>`
+    <tr><td><span class="tag ${tagcls[c.type]}">${tagtxt[c.type]}</span></td>
+    <td><b>${esc(teamName(c.team))}</b><div class="small">${esc(c.player||'')}</div>
+    <div class="small muted">${c.score?c.score[0]+'–'+c.score[1]:''}</div></td>
+    <td><button class="btn sm danger" style="min-height:34px;padding:0 10px" onclick="delCard(${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
+}
+window.delCard=(i)=>{S.cards.splice(i,1);save();renderCards();renderSheet();};
+
+function renderTO(){
+  const log=S._toLog||[];
+  const used=[[0,0],[0,0]]; // [team][half-1]
+  log.forEach(t=>{const h=(t.half===2)?1:0;used[t.team][h]++;});
+  const allow=S.to.perHalf, fl=S.to.floater;
+  let html=`<table><thead><tr><th>Team</th><th>1st half</th><th>2nd half</th><th>Floater</th></tr></thead><tbody>`;
+  for(let i=0;i<2;i++){
+    html+=`<tr><td><b>${esc(teamName(i))}</b></td><td>${used[i][0]} / ${allow}</td><td>${used[i][1]} / ${allow}</td><td>${fl}</td></tr>`;
+  }
+  html+=`</tbody></table>`;
+  if(log.length){html+=`<div class="small muted" style="margin-top:6px">Last: ${log.slice(-3).reverse().map(t=>esc(teamName(t.team))+' '+t.score[0]+'–'+t.score[1]).join(' · ')}</div>`;}
+  $('#toTable').innerHTML=html;
+}
+
+function renderSheet(){
+  const m=S.meta,f=S.fmt;
+  const tInfo=i=>{const t=S.teams[i];return `
+    <td style="width:50%;vertical-align:top">
+      <div style="font-weight:800;font-size:16px">${esc(teamName(i))} <span class="miniscore" style="font-size:18px">${S.score[i]}</span></div>
+      <div class="small">${t.colour?'<span class="swatch" style="background:'+cssColour(t.colour)+'"></span>'+esc(t.colour):''}</div>
+      <div class="small">Capt: ${esc(t.captain||'—')}</div>
+      <div class="small">Spirit: ${esc(t.spirit||'—')}</div>
+      <div class="small">Start: ${esc(t.startOD||'—')} · ${esc(t.startSide||'—')}</div>
+    </td>`;};
+  const wsum=k=>`${S.warn[k][0]} / ${S.warn[k][1]}`;
+  const html=`
+    <h2>Observer summary</h2>
+    <div class="small" style="line-height:1.6">
+      <b>${esc(m.event||'—')}</b> · ${esc(m.div||'')} · ${esc(m.round||'')}<br>
+      ${esc(m.date||'')} ${m.start?'· start '+esc(m.start):''} · ${esc(m.field||'')} ${m.org?'· '+esc(m.org):''}
+    </div>
+    <div class="hr"></div>
+    <div style="font-size:30px;font-weight:800;text-align:center">${teamName(0)} ${S.score[0]} — ${S.score[1]} ${teamName(1)}</div>
+    <table style="margin-top:8px"><tr>${tInfo(0)}${tInfo(1)}</tr></table>
+    <div class="hr"></div>
+    <div class="small">
+      <b>Caps:</b> half ${f.halfCap??'—'}m · soft ${f.softCap??'—'}m · hard ${f.hardCap??'—'}m · game total ${f.gameTotal} (½ target ${f.halfTarget})<br>
+      <b>Start ratio (A):</b> ${ratioLabel(S.ratio.A)} · method ${S.ratio.method}
+    </div>
+    <div class="hr"></div>
+    <table>
+      <thead><tr><th>Warnings</th><th>${esc(teamName(0))}</th><th>${esc(teamName(1))}</th></tr></thead>
+      <tbody>
+        <tr><td>Offsides</td><td>${S.warn.offside[0]}</td><td>${S.warn.offside[1]}</td></tr>
+        <tr><td>False start</td><td>${S.warn.falsestart[0]}</td><td>${S.warn.falsestart[1]}</td></tr>
+        <tr><td>Time violation</td><td>${S.warn.time[0]}</td><td>${S.warn.time[1]}</td></tr>
+      </tbody>
+    </table>
+    ${S.cards.length?`<div class="hr"></div><b class="small">Misconduct</b>${S.cards.map(c=>`<div class="small">• ${({TECH:'Tech',TMF:'Blue',PMF:'Yellow',EJCT:'Red'})[c.type]} — ${esc(teamName(c.team))} — ${esc(c.player||'')}</div>`).join('')}`:''}
+    ${S.notes?`<div class="hr"></div><b class="small">Notes</b><div class="small" style="white-space:pre-wrap">${esc(S.notes)}</div>`:''}
+  `;
+  $('#sheetWrap').innerHTML=html;
+}
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* ============================ SETUP BINDINGS ============================ */
+function fillSetup(){
+  $('#f_event').value=S.meta.event;$('#f_org').value=S.meta.org;$('#f_div').value=S.meta.div;
+  $('#f_date').value=S.meta.date;$('#f_round').value=S.meta.round;$('#f_field').value=S.meta.field;$('#f_start').value=S.meta.start;
+  $('#f_gametotal').value=S.fmt.gameTotal;$('#f_halftarget').value=S.fmt.halfTarget;
+  $('#f_halfcap').value=S.fmt.halfCap??'';$('#f_softcap').value=S.fmt.softCap??'';$('#f_hardcap').value=S.fmt.hardCap??'';
+  $('#f_to_half').value=S.to.perHalf;$('#f_to_float').value=S.to.floater;$('#f_to_len').value=S.to.len;
+  $('#f_lim_line').value=S.lim.line;$('#f_lim_ready').value=S.lim.ready;$('#f_lim_pull').value=S.lim.pull;
+  $('#f_lim_late').value=S.lim.late;$('#f_lim_rpr').value=S.lim.rpr;$('#f_lim_rpp').value=S.lim.rpp;
+  $('#f_ratiomethod').value=S.ratio.method;$('#f_ratioA').value=S.ratio.A;
+  $('#f_sideA').value=S.sideLabels[0];$('#f_sideB').value=S.sideLabels[1];
+  $('#f_sound').checked=S.sound;$('#f_notes').value=S.notes;
+  renderTeamSetup();
+}
+function renderTeamSetup(){
+  const sideOpts=['','A','B'].map((v)=>v).join();
+  const sideSel=(i,val)=>{
+    const o=['<option value="">—</option>',
+      `<option value="${esc(S.sideLabels[0])}" ${val===S.sideLabels[0]?'selected':''}>${esc(S.sideLabels[0])}</option>`,
+      `<option value="${esc(S.sideLabels[1])}" ${val===S.sideLabels[1]?'selected':''}>${esc(S.sideLabels[1])}</option>`];
+    return `<select data-team="${i}" data-k="startSide">${o.join('')}</select>`;
+  };
+  $('#teamSetup').innerHTML=[0,1].map(i=>{const t=S.teams[i];return `
+    <div style="border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px">
+      <div class="row">
+        <label class="fld"><span>Team ${i+1} name</span><input data-team="${i}" data-k="name" value="${esc(t.name)}"></label>
+        <label class="fld"><span>Colour</span><input data-team="${i}" data-k="colour" value="${esc(t.colour)}" placeholder="white"></label>
+      </div>
+      <div class="row">
+        <label class="fld"><span>Captain</span><input data-team="${i}" data-k="captain" value="${esc(t.captain)}"></label>
+        <label class="fld"><span>Spirit captain</span><input data-team="${i}" data-k="spirit" value="${esc(t.spirit)}"></label>
+      </div>
+      <div class="row">
+        <label class="fld"><span>Started on</span>
+          <select data-team="${i}" data-k="startOD">
+            <option value="">—</option>
+            <option value="O" ${t.startOD==='O'?'selected':''}>Offense (receiving)</option>
+            <option value="D" ${t.startOD==='D'?'selected':''}>Defense (pulling)</option>
+          </select></label>
+        <label class="fld"><span>Started side</span>${sideSel(i,t.startSide)}</label>
+      </div>
+    </div>`;}).join('');
+  $$('#teamSetup [data-team]').forEach(el=>el.addEventListener('input',e=>{
+    const i=+el.dataset.team,k=el.dataset.k;S.teams[i][k]=el.value;save();renderTopScore();renderSheet();renderMyTeam();
+    if(k==='name')renderCards();
+  }));
+}
+
+function bindSetup(){
+  const map=[
+    ['#f_event',v=>S.meta.event=v],['#f_org',v=>S.meta.org=v],['#f_div',v=>S.meta.div=v],
+    ['#f_date',v=>S.meta.date=v],['#f_round',v=>S.meta.round=v],['#f_field',v=>S.meta.field=v],['#f_start',v=>S.meta.start=v],
+    ['#f_gametotal',v=>{S.fmt.gameTotal=+v||15;if(!$('#f_halftarget').value)S.fmt.halfTarget=Math.ceil(S.fmt.gameTotal/2);}],
+    ['#f_halftarget',v=>S.fmt.halfTarget=+v||Math.ceil(S.fmt.gameTotal/2)],
+    ['#f_halfcap',v=>S.fmt.halfCap=v===''?null:+v],['#f_softcap',v=>S.fmt.softCap=v===''?null:+v],['#f_hardcap',v=>S.fmt.hardCap=v===''?null:+v],
+    ['#f_to_half',v=>S.to.perHalf=+v||0],['#f_to_float',v=>S.to.floater=+v||0],['#f_to_len',v=>S.to.len=+v||70],
+    ['#f_lim_line',v=>S.lim.line=+v],['#f_lim_ready',v=>S.lim.ready=+v],['#f_lim_pull',v=>S.lim.pull=+v],
+    ['#f_lim_late',v=>S.lim.late=+v],['#f_lim_rpr',v=>S.lim.rpr=+v],['#f_lim_rpp',v=>S.lim.rpp=+v],
+    ['#f_ratiomethod',v=>S.ratio.method=v],['#f_ratioA',v=>S.ratio.A=v],
+    ['#f_notes',v=>S.notes=v],
+  ];
+  map.forEach(([sel,fn])=>{const el=$(sel);el.addEventListener('input',()=>{fn(el.value);save();renderTopScore();renderCaps();renderSheet();});});
+  $('#f_sound').addEventListener('change',e=>{S.sound=e.target.checked;save();if(S.sound)beep(1);});
+  ['#f_sideA','#f_sideB'].forEach((sel,i)=>$(sel).addEventListener('input',e=>{S.sideLabels[i]=e.target.value||('Side '+(i?'B':'A'));save();renderTeamSetup();renderSheet();}));
+  $('#f_halftarget').addEventListener('focus',e=>{if(!e.target.value)e.target.value=Math.ceil(S.fmt.gameTotal/2);});
+}
+
+/* ============================ MISC ACTIONS ============================ */
+function addCard(){
+  const type=$('#card_type').value,team=+$('#card_team').value,player=$('#card_player').value.trim();
+  S.cards.push({type,team,player,ts:Date.now(),score:[...S.score]});
+  $('#card_player').value='';
+  beep(1, type==='EJCT'?440:600);save();renderCards();renderSheet();flash('Recorded');
+}
+function exportJSON(){
+  const data=JSON.stringify(S,null,2);
+  const blob=new Blob([data],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='observer_'+(S.meta.event||'game').replace(/\W+/g,'_')+'_'+(S.meta.date||'')+'.json';
+  a.click();
+}
+function summaryText(){
+  const L=[];const m=S.meta;
+  L.push(`OBSERVER SUMMARY`);
+  L.push(`${m.event||''} ${m.div||''} ${m.round||''}`.trim());
+  L.push(`${m.date||''} ${m.start?'start '+m.start:''} ${m.field||''}`.trim());
+  L.push('');
+  L.push(`${teamName(0)} ${S.score[0]} - ${S.score[1]} ${teamName(1)}`);
+  L.push('');
+  [0,1].forEach(i=>{const t=S.teams[i];L.push(`${teamName(i)}: colour ${t.colour||'-'}, capt ${t.captain||'-'}, spirit ${t.spirit||'-'}, started ${t.startOD||'-'} on ${t.startSide||'-'}`);});
+  L.push('');
+  L.push(`Warnings (T1/T2): offsides ${S.warn.offside.join('/')}, false start ${S.warn.falsestart.join('/')}, time ${S.warn.time.join('/')}`);
+  if(S.cards.length){L.push('');L.push('Misconduct:');S.cards.forEach(c=>L.push(` - ${({TECH:'Tech',TMF:'Blue',PMF:'Yellow',EJCT:'Red'})[c.type]} ${teamName(c.team)} ${c.player||''} (${c.score[0]}-${c.score[1]})`));}
+  L.push('');
+  L.push('Scoring:');
+  S.points.forEach(p=>L.push(` ${p.n}. ${teamName(p.by)} -> ${p.after[0]}-${p.after[1]} ${p.ratio?('['+(p.ratio==='W'?'4W':'4M')+']'):''} ${p.viol&&p.viol.length?'!'+p.viol.join('; '):''}`));
+  if(S.notes){L.push('');L.push('Notes: '+S.notes);}
+  return L.join('\n');
+}
+function copySummary(){const t=summaryText();navigator.clipboard?.writeText(t).then(()=>flash('Summary copied'),()=>fallbackCopy(t));}
+function fallbackCopy(t){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();flash('Summary copied');}
+
+/* ============================ TICK LOOP (warnings/caps) ============================ */
+function tick(){
+  if(T && !T.stopped){
+    const e=elapsed();
+    // milestone audible warnings: beep 20s & 10s before next deadline (matches manual chops)
+    const deadlines=(T.milestones||[]).map(m=>m.at);
+    deadlines.forEach(at=>{
+      [20,10].forEach(lead=>{
+        const mark=at-lead;
+        if(mark>0 && e>=mark && e<mark+0.6 && !T.warned.includes(at+'_'+lead)){
+          T.warned.push(at+'_'+lead);beep(lead===10?2:1, lead===10?990:760);
+          flash(lead+'s — '+(T.role.startsWith('PULL')?'to pull':T.role.startsWith('READY')?'for a hand':T.label));
+          saveTimer();
+        }
+      });
+    });
+    // crossing the final deadline -> long beep + flip to count up
+    const fin=T.base;
+    if(e>=fin && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);
+      notify('Time '+(T.aux?'up':'violation'),T.role);
+      flash((T.aux?'Time up':'DEADLINE — now over')+': '+T.role);saveTimer();}
+  }
+  // caps
+  const startMs=startWallMs();
+  if(startMs){
+    const checkCap=(min,key,label)=>{
+      if(min==null)return;const target=startMs+min*60000;
+      if(Date.now()>=target && !S.capsFired[key]){S.capsFired[key]=true;save();
+        beep(3,440);notify(label+' cap reached',label+' time has elapsed');flash('⏰ '+label+' cap reached');}
+    };
+    checkCap(S.fmt.halfCap,'half','Half');
+    checkCap(S.fmt.softCap,'soft','Soft');
+    checkCap(S.fmt.hardCap,'hard','Hard');
+  }
+  renderTimer();renderCaps();
+}
+
+/* ============================ EVENTS ============================ */
+$$('.scoreplus').forEach(b=>b.addEventListener('click',()=>{unlockAudio();addGoal(+b.dataset.score);}));
+$('#btnReady').addEventListener('click',actReady);
+$('#btnLate20').addEventListener('click',actLate20);
+$('#btnRepull').addEventListener('click',actRepull);
+$('#btnOffside').addEventListener('click',()=>logViol('offside'));
+$('#btnFalse').addEventListener('click',()=>logViol('falsestart'));
+$('#btnTimeV').addEventListener('click',()=>logViol('time'));
+$('#btnTimeout').addEventListener('click',actTimeout);
+$('#btnStop').addEventListener('click',()=>{ if(T&&T.stopped){T.stopped=false;T.startMs=Date.now()-(T.stopElapsed*1000);saveTimer();flash('Clock resumed');}else{stopTimer();flash('Clock stopped');} });
+$('#btnUndo').addEventListener('click',undoGoal);
+$$('#myteamSeg button').forEach(b=>b.addEventListener('click',()=>{S.myTeam=+b.dataset.myteam;save();renderMyTeam();renderTopScore();flash('Now timing '+teamName(S.myTeam));}));
+$$('[data-aux]').forEach(b=>b.addEventListener('click',()=>{unlockAudio();const s=+b.dataset.aux;
+  let ms=[];if(s===420)ms=[{at:120,label:'5 min'},{at:300,label:'2 min'},{at:420,label:'end'}];else ms=[{at:s,label:s+'s'}];
+  startTimer(s,b.textContent.trim().toUpperCase(),'',ms,{aux:true});}));
+$('#btnAddCard').addEventListener('click',addCard);
+$('#btnExport').addEventListener('click',exportJSON);
+$('#btnImport').addEventListener('click',()=>$('#fileImport').click());
+$('#fileImport').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{try{const v=JSON.parse(rd.result);S=Object.assign(DEF(),v);clearTimer();save();fillSetup();renderAll();flash('Imported');}catch(err){alert('Invalid file');}};rd.readAsText(f);});
+$('#btnCopy').addEventListener('click',copySummary);
+$('#btnCopy2').addEventListener('click',copySummary);
+$('#btnPrint').addEventListener('click',()=>window.print());
+$('#btnReset').addEventListener('click',()=>{if(confirm('Start a NEW game? This clears the current score, log, and warnings. (Setup like team names is also reset.)')){const keepSound=S.sound;S=DEF();S.sound=keepSound;clearTimer();save();fillSetup();renderAll();flash('New game');}});
+$('#btnNotif').addEventListener('click',async()=>{
+  if(!('Notification'in window)){alert('Notifications not supported on this browser.');return;}
+  const p=await Notification.requestPermission();notifOK=(p==='granted');flash(notifOK?'Notifications enabled':'Not enabled');
+});
+$$('#tabbar button').forEach(b=>b.addEventListener('click',()=>{
+  $$('#tabbar button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  $$('.page').forEach(p=>p.classList.remove('on'));$('#page-'+b.dataset.tab).classList.add('on');
+  window.scrollTo(0,0);
+}));
+
+function unlockAudio(){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();}catch(e){}}
+
+// keep awake-ish: re-render on visibility
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderAll();});
+
+/* ============================ INIT ============================ */
+if('Notification'in window && Notification.permission==='granted')notifOK=true;
+fillSetup();renderAll();
+setInterval(tick,250);
+// Add-to-home-screen manifest (inline)
+const manifest={name:'Observer Sheet',short_name:'Observer',display:'standalone',background_color:'#f4f5f7',theme_color:'#0f172a',start_url:'.',icons:[]};
+const ml=document.createElement('link');ml.rel='manifest';ml.href='data:application/json,'+encodeURIComponent(JSON.stringify(manifest));document.head.appendChild(ml);
+</script>
+</body>
+</html>
