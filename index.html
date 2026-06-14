@@ -73,6 +73,13 @@
   .timer .big{font-size:74px;font-weight:800;font-variant-numeric:tabular-nums;line-height:.95;margin:2px 0;}
   .timer.over .big{color:var(--bad);}
   .timer .sub{font-size:13px;color:var(--muted);min-height:18px;}
+  .deadline{margin-top:8px;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .deadline .lim{font-size:12px;font-weight:600;color:var(--muted);}
+  .deadline.ok{color:var(--ink);} .deadline.warn{color:var(--warn);} .deadline.over{color:var(--bad);}
+  .deadline .relay{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-top:2px;}
+  .rolebox{margin-top:10px;text-align:center;font-weight:800;font-size:15px;padding:8px;border-radius:10px;background:var(--chip);border:1px solid var(--line);}
+  .rolebox .pull{color:var(--accent2);} .rolebox .ready{color:var(--ok);}
+  .rolebox small{display:block;font-weight:600;color:var(--muted);font-size:11.5px;margin-top:2px;}
   .miles{display:flex;gap:6px;justify-content:center;margin-top:8px;flex-wrap:wrap;}
   .mile{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--chip);border:1px solid var(--line);color:var(--muted);}
   .mile.done{background:#e7f3ea;border-color:#bcdcc4;color:var(--ok);}
@@ -162,7 +169,8 @@
       <div class="timer" id="timerBox">
         <div class="role" id="timerRole">No point in progress</div>
         <div class="big" id="timerBig">—:—</div>
-        <div class="sub" id="timerSub">Tap “+ Goal” for the team that just scored to start the between-point clock.</div>
+        <div class="sub" id="timerSub">Tap “+ Goal” for the team that just scored to start the clock.</div>
+        <div class="deadline" id="deadline"></div>
         <div class="miles" id="miles"></div>
       </div>
 
@@ -184,12 +192,17 @@
     </div>
 
     <div class="panel" style="padding:10px">
-      <div class="small muted" style="margin-bottom:6px">I am the observer timing:</div>
-      <div class="seg" id="myteamSeg">
-        <button data-myteam="0" id="seg0">Team 1</button>
-        <button data-myteam="1" id="seg1">Team 2</button>
+      <div class="small muted" style="margin-bottom:6px">Your position</div>
+      <div class="seg" id="obsEndSeg">
+        <button data-obsend="0" id="end0">End A</button>
+        <button data-obsend="1" id="end1">End B</button>
       </div>
-      <div class="help">Your clock shows <b>80s</b> when your team scored (they pull) and <b>60s</b> when your team conceded (they receive). The other observer times the opposite team.</div>
+      <div id="roleReadout" class="rolebox"></div>
+      <div class="grid2" style="margin-top:8px">
+        <button class="btn sm ghost" id="btnStartClock">Start point clock</button>
+        <button class="btn sm ghost" id="btnSwapEnd">⇄ Role looks wrong</button>
+      </div>
+      <div class="help">Teams swap ends every point but you don't. Your clock is <b>80s (pull)</b> when the pulling team is at <b>your</b> end, <b>60s (readiness)</b> when the receiving team is. The app tracks which end the pull comes from after each goal — “Role looks wrong” flips it if the on-field reality differs.</div>
     </div>
 
     <details class="panel" style="padding:10px">
@@ -276,9 +289,9 @@
     <div class="panel">
       <h2>Teams</h2>
       <div id="teamSetup"></div>
-      <label class="fld" style="margin-top:10px"><span>Field side labels (venue-specific)</span>
-        <div class="row"><input id="f_sideA" placeholder="e.g. Scoreboard / North"><input id="f_sideB" placeholder="e.g. Far / South"></div></label>
-      <div class="help">These labels appear in the “started on side” pickers below and on the sheet.</div>
+      <label class="fld" style="margin-top:10px"><span>End labels (venue-specific)</span>
+        <div class="row"><input id="f_sideA" placeholder="End A — e.g. Scoreboard / North"><input id="f_sideB" placeholder="End B — e.g. Far / South"></div></label>
+      <div class="help">Name the two ends of the field. These feed each team's starting end and your own position (set on the Timer tab), which together determine whether your clock is the 80s pull or 60s readiness each point.</div>
     </div>
 
     <div class="panel">
@@ -373,7 +386,8 @@ const DEF=()=>({
     {name:'Team 1',colour:'',captain:'',spirit:'',startOD:'',startSide:''},
     {name:'Team 2',colour:'',captain:'',spirit:'',startOD:'',startSide:''}
   ],
-  myTeam:0,
+  obsEnd:0,             // which end (sideLabels index) the observer is stationed at
+  roleFlip:false,       // manual parity correction if tracked role is wrong
   sound:true,
   score:[0,0],
   half:1,
@@ -393,10 +407,15 @@ let T=loadTimer();           // {startMs, base, mode, label, role, milestones:[{
 function loadTimer(){try{const v=JSON.parse(localStorage.getItem(KEY+'_t'));if(v)return v;}catch(e){}return null;}
 function saveTimer(){if(T)localStorage.setItem(KEY+'_t',JSON.stringify(T));else localStorage.removeItem(KEY+'_t');}
 
-function startTimer(base,role,label,milestones,opts){
-  opts=opts||{};
-  T={startMs:Date.now(),base,role,label,milestones:milestones||[],warned:[],stopped:false,
-     warnTeam:opts.warnTeam, aux:!!opts.aux};
+// Between-point clock: counts UP (elapsed since the goal) and stays running until
+// the next goal, so the elapsed stopwatch is always available even after readiness.
+function startPointClock(o){
+  T=Object.assign({kind:'point',startMs:Date.now(),warned:[],readyAt:null,stopped:false,milestones:[],aux:false},o);
+  saveTimer();renderTimer();
+}
+// Auxiliary clock (timeout / halftime / disc-in): counts DOWN from a base.
+function startAux(base,role,milestones){
+  T={kind:'aux',startMs:Date.now(),base,role,label:'',milestones:milestones||[{at:base,label:base+'s'}],warned:[],stopped:false,aux:true};
   saveTimer();renderTimer();
 }
 function stopTimer(){if(T){T.stopped=true;T.stopElapsed=elapsed();}saveTimer();renderTimer();}
@@ -416,6 +435,29 @@ function ratioForPoint(n){ // n = 1-indexed point number
   return (Math.floor(n/2)%2===0)?A:B;
 }
 function pointNo(){return S.score[0]+S.score[1]+1;}
+
+/* ---- end / pull-side tracking ----
+   Each observer is fixed at one end. The pull comes from the end where the last
+   goal was scored: it STAYS at the same end when the receiving (offence) team holds,
+   and FLIPS when the pulling (defence) team breaks. So role flips only on a break. */
+function other(i){return i===0?1:0;}
+function sideIdx(label){const i=S.sideLabels.indexOf(label);return i<0?null:i;}
+function startPullTeam(){ // team starting on Defence pulls the 1st point
+  if(S.teams[0].startOD==='D'||S.teams[1].startOD==='O')return 0;
+  if(S.teams[1].startOD==='D'||S.teams[0].startOD==='O')return 1;
+  return 0;
+}
+function startPullEnd(){const i=sideIdx(S.teams[startPullTeam()].startSide);return i==null?S.obsEnd:i;}
+function pullState(){ // {team,end} for the upcoming (in-progress) point
+  let team=startPullTeam(),end=startPullEnd();
+  for(const p of S.points){if(p.by===team)end=other(end);team=p.by;}
+  if(S.roleFlip)end=other(end);
+  return {team,end};
+}
+function amPull(st){return (st||pullState()).end===S.obsEnd;}
+function pullingTeam(){return pullState().team;}
+function receivingTeam(){return other(pullState().team);}
+
 function flash(msg){const f=$('#flash');f.textContent=msg;f.classList.add('show');clearTimeout(f._t);f._t=setTimeout(()=>f.classList.remove('show'),2600);}
 
 /* sound + vibrate */
@@ -446,8 +488,7 @@ function addGoal(by){
   const n=pointNo();
   const r=ratioForPoint(n);
   S.score[by]++;
-  S.points.push({n,by,ratio:r,after:[...S.score],dur:Math.round(elapsed()&&!T?0:0),viol:[]});
-  // record duration of the *previous* between-point clock if it was running for this scoring? We instead time forward.
+  S.points.push({n,by,ratio:r,after:[...S.score],viol:[]});
   // halftime check
   if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget)){
     S.half=2; flash('Halftime target reached'); beep(2,660); notify('Halftime','Target '+S.fmt.halfTarget+' reached');
@@ -457,23 +498,19 @@ function addGoal(by){
     flash('Game total reached — game point/over'); beep(3,990);
   }
   save();
-  startBetweenPoint(by);
+  startBetweenPoint();
   renderAll();
 }
-function startBetweenPoint(scoredBy){
-  // The team that scored becomes the pulling team. My role depends on whether my team scored.
-  const myScored = (scoredBy===S.myTeam);
-  if(myScored){
-    // my team pulls -> 80s pull clock
-    startTimer(S.lim.pull,'PULL — '+teamName(S.myTeam),'to pull',
-      [{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'ready '+S.lim.ready},{at:S.lim.pull,label:'PULL '+S.lim.pull}],
-      {warnTeam:S.myTeam});
-  }else{
-    // my team receives -> 60s readiness clock
-    startTimer(S.lim.ready,'READY — '+teamName(S.myTeam),'to signal readiness',
-      [{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'READY '+S.lim.ready}],
-      {warnTeam:S.myTeam});
-  }
+// Start the between-point clock for the upcoming point, role derived from the end
+// the pull comes from vs. the observer's end.
+function startBetweenPoint(){
+  const st=pullState(), pull=amPull(st);
+  const team = pull? st.team : other(st.team);
+  startPointClock({
+    role: pull?'PULL':'READY', team, pullEnd:st.end,
+    deadline: pull?S.lim.pull:S.lim.ready,
+    milestones:[{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'ready '+S.lim.ready},{at:S.lim.pull,label:'pull '+S.lim.pull}]
+  });
 }
 function undoGoal(){
   if(!S.points.length){flash('Nothing to undo');return;}
@@ -486,60 +523,61 @@ function undoGoal(){
 }
 
 /* ============================ TIMER ACTIONS ============================ */
-function actLate20(){startTimer(S.lim.late,'PULL — late ready','to pull (20s)',[{at:S.lim.late,label:'PULL '+S.lim.late}],{warnTeam:S.myTeam});flash('Reset: 20s to pull after late readiness');}
-function actRepull(){
-  const myScored = T && T.role && T.role.startsWith('PULL');
-  // re-pull: receiving 20s ready, pulling 40s pull. Show whichever applies to my role.
-  if(myScored){startTimer(S.lim.rpp,'RE-PULL — pull','to re-pull',[{at:S.lim.rpr,label:'ready '+S.lim.rpr},{at:S.lim.rpp,label:'PULL '+S.lim.rpp}],{warnTeam:S.myTeam});}
-  else{startTimer(S.lim.rpr,'RE-PULL — ready','to signal readiness',[{at:S.lim.rpr,label:'READY '+S.lim.rpr}],{warnTeam:S.myTeam});}
-  flash('Re-pull timing started');
+// Manually (re)start the between-point clock — for the first pull of the game,
+// after halftime, or to restart timing for the current point.
+function startBetweenManual(){startBetweenPoint();flash('Point clock started');}
+// Pulling team's window becomes 20s-after-readiness when the receiving team
+// signals late. Keeps the elapsed stopwatch running (no reset).
+function actLate20(){
+  if(!T||T.kind!=='point'){flash('No point clock running');return;}
+  const e=elapsed();T.readyAt=e;T.deadline=e+S.lim.late;T.warned=[];
+  saveTimer();renderTimer();flash('Pull due within '+S.lim.late+'s of readiness');
 }
+// Re-pull resets the watch (per the manual): receiving 20s / pulling 40s.
+function actRepull(){resetWatch(S.lim.rpr,S.lim.rpp,'re-pull');flash('Re-pull timing started');}
 function actReady(){
-  // receiving team signaled readiness. If I'm timing the receiving team, my obligation is met.
-  if(T && T.role && T.role.startsWith('READY')){
-    clearTimer();flash('Readiness signaled — clock cleared');
-  }else if(T && T.role && T.role.startsWith('PULL')){
-    // other team just got ready; pulling team now has 20s if it was late
-    if(elapsed()>=S.lim.ready){actLate20();}
-    else flash('Noted — pull still due at '+S.lim.pull+'s');
-  }else{flash('No clock running');}
+  if(!T||T.kind!=='point'){flash('No point clock running');return;}
+  const e=elapsed();T.readyAt=e;
+  if(T.role==='PULL'){ // the receiving (other) team signalled; if late, pull window extends
+    if(e>S.lim.ready){T.deadline=Math.max(S.lim.pull,e+S.lim.late);T.warned=[];flash('Ready late — pull by '+Math.round(T.deadline)+'s');}
+    else flash('Ready noted — pull by '+S.lim.pull+'s');
+  }else{ // my (receiving) team's obligation met; elapsed keeps running for relay
+    flash('Readiness signalled at '+fmtClock(e)+' ✓');
+  }
+  saveTimer();renderTimer();
+}
+// Reset the between-point watch to the post-warning / re-pull schedule for my role.
+function resetWatch(readyLim,pullLim){
+  const st=pullState(),pull=amPull(st);
+  startPointClock({role:pull?'PULL':'READY',team:pull?st.team:other(st.team),pullEnd:st.end,
+    deadline:pull?pullLim:readyLim,
+    milestones:[{at:readyLim,label:'ready '+readyLim},{at:pullLim,label:'pull '+pullLim}]});
 }
 function logViol(kind){
-  // kind: offside / falsestart / time
-  const team = (kind==='offside')? other(S.myTeam) : S.myTeam; // offsides = pulling team (the team that scored = my team if PULL)
-  // Better: attribute by current role. offsides -> pulling team; false start -> receiving team; time -> per situation, ask team.
+  // offsides -> pulling team; false start -> receiving team; time -> the team at fault (asks)
   let t;
-  if(kind==='offside'){t = pullingTeam();}
-  else if(kind==='falsestart'){t = receivingTeam();}
-  else {t = S.myTeam;}
-  if(t==null)t=S.myTeam;
+  if(kind==='offside')t=pullingTeam();
+  else if(kind==='falsestart')t=receivingTeam();
+  else t=pickTeamPrompt('Time violation on which team?');
+  if(t==null)return;
   S.warn[kind][t]++;
   const label={offside:'Offsides',falsestart:'False start',time:'Time violation'}[kind];
-  // attach to current point if exists
   if(S.points.length)S.points[S.points.length-1].viol.push(label+' ('+teamName(t)+')');
-  beep(1,520);flash(label+' — '+teamName(t));
-  if(kind==='time'){
-    // after a time-violation warning, reset to the "after warning" timing: 20s ready / 40s? Manual reset offered:
-    startTimer(S.lim.rpp,'AFTER WARNING','to pull (reset)',[{at:S.lim.rpr,label:'ready '+S.lim.rpr},{at:S.lim.rpp,label:'PULL '+S.lim.rpp}],{warnTeam:t});
-  }
+  beep(1,520);flash(label+' — '+teamName(t)+(S.warn[kind][t]===1?' (warning)':' (#'+S.warn[kind][t]+')'));
+  // The manual resets the watch as soon as an offsides / time-violation warning is called.
+  resetWatch(S.lim.rpr,S.lim.rpp);
   save();renderAll();
 }
-function other(i){return i===0?1:0;}
-function pullingTeam(){ // team that scored the last point
-  if(!S.points.length)return null; return S.points[S.points.length-1].by;
-}
-function receivingTeam(){const p=pullingTeam();return p==null?null:other(p);}
 
 function actTimeout(){
   // record a timeout for a team
   const t=pickTeamPrompt('Timeout for which team?');
   if(t==null)return;
   const half=S.half;
-  S.cards; // noop
   S._toLog=S._toLog||[];
   S._toLog.push({team:t,half,ts:Date.now(),score:[...S.score]});
-  // start 70s timeout clock
-  startTimer(S.to.len,'TIMEOUT — '+teamName(t),'timeout',[{at:S.to.len,label:'TO '+S.to.len}],{aux:true});
+  // start 70s timeout clock (counts down)
+  startAux(S.to.len,'TIMEOUT — '+teamName(t),[{at:S.to.len,label:'TO '+S.to.len}]);
   beep(1,660);flash('Timeout — '+teamName(t));
   save();renderAll();
 }
@@ -550,7 +588,7 @@ function pickTeamPrompt(q){
 }
 
 /* ============================ RENDER ============================ */
-function renderAll(){renderTopScore();renderTimer();renderCaps();renderHistory();renderWarn();renderCards();renderTO();renderSheet();renderMyTeam();save();}
+function renderAll(){renderTopScore();renderTimer();renderCaps();renderHistory();renderWarn();renderCards();renderTO();renderSheet();renderRole();save();}
 
 function renderTopScore(){
   $('#tn0').textContent=teamName(0);$('#tn1').textContent=teamName(1);
@@ -578,31 +616,55 @@ function cssColour(name){const c=(name||'').trim().toLowerCase();
   const map={white:'#ffffff',black:'#222',red:'#e53935',blue:'#1e88e5',navy:'#1a237e',green:'#2e7d32',yellow:'#fdd835',orange:'#fb8c00',purple:'#8e24aa',pink:'#ec407a',grey:'#9e9e9e',gray:'#9e9e9e',teal:'#00897b',maroon:'#7b1f2b',gold:'#d4af37',lime:'#c0ca33',cyan:'#00acc1'};
   if(map[c])return map[c];if(/^#|rgb/.test(c))return name;return '#cfd6df';}
 
-function renderMyTeam(){
-  $('#seg0').classList.toggle('on',S.myTeam===0);
-  $('#seg1').classList.toggle('on',S.myTeam===1);
-  $('#seg0').textContent=teamName(0);$('#seg1').textContent=teamName(1);
+function endLabel(i){return S.sideLabels[i]||('End '+(i?'B':'A'));}
+function renderRole(){
+  $('#end0').textContent=endLabel(0);$('#end1').textContent=endLabel(1);
+  $('#end0').classList.toggle('on',S.obsEnd===0);
+  $('#end1').classList.toggle('on',S.obsEnd===1);
+  const st=pullState(),pull=amPull(st);
+  const team=pull?st.team:other(st.team);
+  $('#roleReadout').innerHTML = pull
+    ? `<span class="pull">PULL — ${esc(teamName(team))} (${S.lim.pull}s)</span><small>Pulling team is at your end (${esc(endLabel(S.obsEnd))})</small>`
+    : `<span class="ready">READINESS — ${esc(teamName(team))} (${S.lim.ready}s)</span><small>Receiving team is at your end; pull comes from ${esc(endLabel(st.end))}</small>`;
 }
 
 function renderTimer(){
-  const box=$('#timerBox');
-  if(!T){box.className='timer';$('#timerRole').textContent='No point in progress';
-    $('#timerBig').textContent='—:—';$('#timerSub').textContent='Tap “+ Goal” for the team that just scored to start the clock.';$('#miles').innerHTML='';return;}
-  const e=elapsed();const rem=T.base-e;
-  $('#timerRole').textContent=T.role;
-  $('#timerBig').textContent=fmtClock(rem);
-  let sub;
-  if(rem>0)sub=Math.ceil(rem)+'s '+T.label;
-  else sub='OVER by '+fmtClock(-rem).replace('+','')+' — '+(T.aux?'time up':'time violation possible');
-  $('#timerSub').textContent=sub;
-  // class
-  box.className='timer run';
-  if(rem<=0)box.classList.add('over');
-  else if(rem<=12)box.classList.add('warnear');
-  if(T.stopped){box.classList.add('warnear');$('#timerRole').textContent=T.role+' (stopped)';}
-  // milestones
+  const box=$('#timerBox'),dl=$('#deadline');
+  if(!T){
+    box.className='timer';
+    $('#timerRole').textContent='No point in progress';
+    $('#timerBig').textContent='—:—';
+    $('#timerSub').textContent='Tap “+ Goal” for the team that scored, or “Start point clock” for the first pull.';
+    dl.className='deadline';dl.innerHTML='';$('#miles').innerHTML='';return;
+  }
+  const e=elapsed();
+  if(T.kind==='aux'){ // count DOWN
+    const rem=T.base-e;
+    box.className='timer run'+(rem<=0?' over':(rem<=12?' warnear':''));
+    $('#timerRole').textContent=T.role+(T.stopped?' (paused)':'');
+    $('#timerBig').textContent=fmtClock(rem);
+    $('#timerSub').textContent=rem>0?Math.ceil(rem)+'s remaining':'time up';
+    dl.className='deadline';dl.innerHTML='';
+    $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${e>=m.at?'done':(m.at===nextMile(e)?'cur':'')}">${m.label}</span>`).join('');
+    return;
+  }
+  // BETWEEN-POINT: big number = elapsed stopwatch (always running until next goal)
+  const rem=T.deadline-e;
+  $('#timerRole').textContent=T.role+' — '+teamName(T.team)+(T.stopped?' (paused)':'');
+  $('#timerBig').textContent=fmtClock(e);
+  $('#timerSub').textContent='elapsed since goal'+(T.readyAt!=null?' · ready ✓ '+fmtClock(T.readyAt):'');
+  // deadline countdown line
+  const what=T.role==='PULL'?'to pull':'for a hand';
+  dl.className='deadline '+(rem<=0?'over':(rem<=12?'warn':'ok'));
+  const relayMark=T.role==='READY'?`<span class="relay">other observer's pull due at ${S.lim.pull}s</span>`:'';
+  dl.innerHTML = rem>0
+    ? `${Math.ceil(rem)}s ${what} <span class="lim">(limit ${Math.round(T.deadline)}s)</span>${relayMark}`
+    : `OVERDUE +${fmtClock(-rem).replace('+','')} <span class="lim">${what}</span>${relayMark}`;
+  box.className='timer run'+(rem<=0?' over':(rem<=12?' warnear':''));
+  if(T.stopped)box.classList.add('warnear');
+  // milestones vs elapsed (situational awareness for both teams)
   $('#miles').innerHTML=(T.milestones||[]).map(m=>{
-    const cls=e>=m.at?'done':(rem>0 && m.at===nextMile(e)?'cur':'');
+    const cls=e>=m.at?'done':(m.at===nextMile(e)?'cur':'');
     return `<span class="mile ${cls}">${m.label}</span>`;
   }).join('');
 }
@@ -778,11 +840,11 @@ function renderTeamSetup(){
             <option value="O" ${t.startOD==='O'?'selected':''}>Offense (receiving)</option>
             <option value="D" ${t.startOD==='D'?'selected':''}>Defense (pulling)</option>
           </select></label>
-        <label class="fld"><span>Started side</span>${sideSel(i,t.startSide)}</label>
+        <label class="fld"><span>Started end (defends)</span>${sideSel(i,t.startSide)}</label>
       </div>
     </div>`;}).join('');
   $$('#teamSetup [data-team]').forEach(el=>el.addEventListener('input',e=>{
-    const i=+el.dataset.team,k=el.dataset.k;S.teams[i][k]=el.value;save();renderTopScore();renderSheet();renderMyTeam();
+    const i=+el.dataset.team,k=el.dataset.k;S.teams[i][k]=el.value;save();renderTopScore();renderSheet();renderRole();
     if(k==='name')renderCards();
   }));
 }
@@ -802,7 +864,7 @@ function bindSetup(){
   ];
   map.forEach(([sel,fn])=>{const el=$(sel);el.addEventListener('input',()=>{fn(el.value);save();renderTopScore();renderCaps();renderSheet();});});
   $('#f_sound').addEventListener('change',e=>{S.sound=e.target.checked;save();if(S.sound)beep(1);});
-  ['#f_sideA','#f_sideB'].forEach((sel,i)=>$(sel).addEventListener('input',e=>{S.sideLabels[i]=e.target.value||('Side '+(i?'B':'A'));save();renderTeamSetup();renderSheet();}));
+  ['#f_sideA','#f_sideB'].forEach((sel,i)=>$(sel).addEventListener('input',e=>{S.sideLabels[i]=e.target.value||('End '+(i?'B':'A'));save();renderTeamSetup();renderSheet();renderRole();}));
   $('#f_halftarget').addEventListener('focus',e=>{if(!e.target.value)e.target.value=Math.ceil(S.fmt.gameTotal/2);});
 }
 
@@ -845,23 +907,22 @@ function fallbackCopy(t){const ta=document.createElement('textarea');ta.value=t;
 function tick(){
   if(T && !T.stopped){
     const e=elapsed();
-    // milestone audible warnings: beep 20s & 10s before next deadline (matches manual chops)
-    const deadlines=(T.milestones||[]).map(m=>m.at);
-    deadlines.forEach(at=>{
+    if(T.kind==='aux'){ // milestone + end beeps (e.g. halftime 5/2 min)
+      (T.milestones||[]).forEach(m=>{
+        if(e>=m.at && e<m.at+0.6 && !T.warned.includes('m'+m.at)){T.warned.push('m'+m.at);beep(2,760);flash(m.label);saveTimer();}
+      });
+      if(e>=T.base && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);notify('Time up',T.role);flash('Time up: '+T.role);saveTimer();}
+    }else{ // between-point: warn 20s & 10s before MY deadline, then at the deadline
+      const what=T.role==='PULL'?'to pull':'for a hand';
       [20,10].forEach(lead=>{
-        const mark=at-lead;
-        if(mark>0 && e>=mark && e<mark+0.6 && !T.warned.includes(at+'_'+lead)){
-          T.warned.push(at+'_'+lead);beep(lead===10?2:1, lead===10?990:760);
-          flash(lead+'s — '+(T.role.startsWith('PULL')?'to pull':T.role.startsWith('READY')?'for a hand':T.label));
-          saveTimer();
+        const mark=T.deadline-lead;
+        if(mark>0 && e>=mark && e<mark+0.6 && !T.warned.includes('d'+lead)){
+          T.warned.push('d'+lead);beep(lead===10?2:1, lead===10?990:760);flash(lead+'s '+what);saveTimer();
         }
       });
-    });
-    // crossing the final deadline -> long beep + flip to count up
-    const fin=T.base;
-    if(e>=fin && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);
-      notify('Time '+(T.aux?'up':'violation'),T.role);
-      flash((T.aux?'Time up':'DEADLINE — now over')+': '+T.role);saveTimer();}
+      if(e>=T.deadline && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);
+        notify('Time violation',T.role+' — '+teamName(T.team));flash('OVERDUE — '+what);saveTimer();}
+    }
   }
   // caps
   const startMs=startWallMs();
@@ -889,10 +950,12 @@ $('#btnTimeV').addEventListener('click',()=>logViol('time'));
 $('#btnTimeout').addEventListener('click',actTimeout);
 $('#btnStop').addEventListener('click',()=>{ if(T&&T.stopped){T.stopped=false;T.startMs=Date.now()-(T.stopElapsed*1000);saveTimer();flash('Clock resumed');}else{stopTimer();flash('Clock stopped');} });
 $('#btnUndo').addEventListener('click',undoGoal);
-$$('#myteamSeg button').forEach(b=>b.addEventListener('click',()=>{S.myTeam=+b.dataset.myteam;save();renderMyTeam();renderTopScore();flash('Now timing '+teamName(S.myTeam));}));
+$('#btnStartClock').addEventListener('click',()=>{unlockAudio();startBetweenManual();renderRole();});
+$('#btnSwapEnd').addEventListener('click',()=>{S.roleFlip=!S.roleFlip;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('Role flipped — now '+(amPull()?'PULL (80s)':'READINESS (60s)'));});
+$$('#obsEndSeg button').forEach(b=>b.addEventListener('click',()=>{S.obsEnd=+b.dataset.obsend;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('You are at '+endLabel(S.obsEnd));}));
 $$('[data-aux]').forEach(b=>b.addEventListener('click',()=>{unlockAudio();const s=+b.dataset.aux;
-  let ms=[];if(s===420)ms=[{at:120,label:'5 min'},{at:300,label:'2 min'},{at:420,label:'end'}];else ms=[{at:s,label:s+'s'}];
-  startTimer(s,b.textContent.trim().toUpperCase(),'',ms,{aux:true});}));
+  let ms=[];if(s===420)ms=[{at:120,label:'5 min'},{at:300,label:'2 min'}];else ms=[{at:s,label:s+'s'}];
+  startAux(s,b.textContent.trim().toUpperCase(),ms);}));
 $('#btnAddCard').addEventListener('click',addCard);
 $('#btnExport').addEventListener('click',exportJSON);
 $('#btnImport').addEventListener('click',()=>$('#fileImport').click());
@@ -919,7 +982,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderAll(
 
 /* ============================ INIT ============================ */
 if('Notification'in window && Notification.permission==='granted')notifOK=true;
-fillSetup();renderAll();
+fillSetup();bindSetup();renderAll();
 setInterval(tick,250);
 // Add-to-home-screen manifest (inline)
 const manifest={name:'Observer Sheet',short_name:'Observer',display:'standalone',background_color:'#f4f5f7',theme_color:'#0f172a',start_url:'.',icons:[]};
