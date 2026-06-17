@@ -69,6 +69,9 @@
   .timer.run{border-color:var(--accent);}
   .timer.warnear{border-color:var(--warn);background:#fff8ec;}
   .timer.over{border-color:var(--bad);background:#fff0f0;}
+  .timer.pulled{border-color:var(--ok);background:#f0faf3;}
+  .timer.pulled .big{color:var(--ok);}
+  .btn.pulled{background:#e7f3ea;color:var(--ok);border-color:#bcdcc4;}
   .timer .role{font-size:13px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);}
   .timer .big{font-size:74px;font-weight:800;font-variant-numeric:tabular-nums;line-height:.95;margin:2px 0;}
   .timer.over .big{color:var(--bad);}
@@ -174,7 +177,9 @@
         <div class="miles" id="miles"></div>
       </div>
 
-      <div class="grid3" style="margin-top:10px">
+      <button class="btn primary" id="btnPull" style="width:100%;margin-top:10px">Pull released ⏺</button>
+
+      <div class="grid3" style="margin-top:8px">
         <button class="btn sm ghost" id="btnReady">Readiness ✋</button>
         <button class="btn sm ghost" id="btnLate20">Late ready →20s</button>
         <button class="btn sm ghost" id="btnRepull">Re-pull</button>
@@ -420,7 +425,7 @@ function startAux(base,role,milestones){
 }
 function stopTimer(){if(T){T.stopped=true;T.stopElapsed=elapsed();}saveTimer();renderTimer();}
 function clearTimer(){T=null;saveTimer();renderTimer();}
-function elapsed(){if(!T)return 0;if(T.stopped)return T.stopElapsed||0;return (Date.now()-T.startMs)/1000;}
+function elapsed(){if(!T)return 0;if(T.pulled)return T.pulledAt;if(T.stopped)return T.stopElapsed||0;return (Date.now()-T.startMs)/1000;}
 
 /* ============================ HELPERS ============================ */
 const $=s=>document.querySelector(s);
@@ -487,8 +492,9 @@ function notify(title,body){
 function addGoal(by){
   const n=pointNo();
   const r=ratioForPoint(n);
+  const pullAt=(T&&T.kind==='point'&&T.pulled)?Math.round(T.pulledAt):null;
   S.score[by]++;
-  S.points.push({n,by,ratio:r,after:[...S.score],viol:[]});
+  S.points.push({n,by,ratio:r,after:[...S.score],viol:[],pullAt});
   // halftime check
   if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget)){
     S.half=2; flash('Halftime target reached'); beep(2,660); notify('Halftime','Target '+S.fmt.halfTarget+' reached');
@@ -509,6 +515,7 @@ function startBetweenPoint(){
   startPointClock({
     role: pull?'PULL':'READY', team, pullEnd:st.end,
     deadline: pull?S.lim.pull:S.lim.ready,
+    pullLimit: S.lim.pull, // the pull is always due by this, whatever my role
     milestones:[{at:S.lim.line,label:'line '+S.lim.line},{at:S.lim.ready,label:'ready '+S.lim.ready},{at:S.lim.pull,label:'pull '+S.lim.pull}]
   });
 }
@@ -526,11 +533,20 @@ function undoGoal(){
 // Manually (re)start the between-point clock — for the first pull of the game,
 // after halftime, or to restart timing for the current point.
 function startBetweenManual(){startBetweenPoint();flash('Point clock started');}
+// Mark the pull as released: freeze the elapsed clock and record the pull time
+// (the between-point interval is over — disc is in play). Tap again to undo.
+function actPull(){
+  if(!T||T.kind!=='point'){flash('No point clock running');return;}
+  if(T.pulled){const at=T.pulledAt;T.pulled=false;T.startMs=Date.now()-at*1000;saveTimer();renderTimer();flash('Pull un-marked');return;}
+  const e=elapsed();T.pulled=true;T.pulledAt=e;const onTime=e<=(T.pullLimit||S.lim.pull);
+  saveTimer();renderTimer();beep(1,onTime?760:520);
+  flash('Pull released at '+fmtClock(e)+(onTime?' ✓':' (late)'));
+}
 // Pulling team's window becomes 20s-after-readiness when the receiving team
 // signals late. Keeps the elapsed stopwatch running (no reset).
 function actLate20(){
   if(!T||T.kind!=='point'){flash('No point clock running');return;}
-  const e=elapsed();T.readyAt=e;T.deadline=e+S.lim.late;T.warned=[];
+  const e=elapsed();T.readyAt=e;T.deadline=e+S.lim.late;T.pullLimit=e+S.lim.late;T.warned=[];
   saveTimer();renderTimer();flash('Pull due within '+S.lim.late+'s of readiness');
 }
 // Re-pull resets the watch (per the manual): receiving 20s / pulling 40s.
@@ -539,9 +555,10 @@ function actReady(){
   if(!T||T.kind!=='point'){flash('No point clock running');return;}
   const e=elapsed();T.readyAt=e;
   if(T.role==='PULL'){ // the receiving (other) team signalled; if late, pull window extends
-    if(e>S.lim.ready){T.deadline=Math.max(S.lim.pull,e+S.lim.late);T.warned=[];flash('Ready late — pull by '+Math.round(T.deadline)+'s');}
+    if(e>S.lim.ready){T.deadline=Math.max(S.lim.pull,e+S.lim.late);T.pullLimit=T.deadline;T.warned=[];flash('Ready late — pull by '+Math.round(T.deadline)+'s');}
     else flash('Ready noted — pull by '+S.lim.pull+'s');
   }else{ // my (receiving) team's obligation met; elapsed keeps running for relay
+    if(e>S.lim.ready)T.pullLimit=Math.max(T.pullLimit||S.lim.pull,e+S.lim.late); // late hand extends the pull window
     flash('Readiness signalled at '+fmtClock(e)+' ✓');
   }
   saveTimer();renderTimer();
@@ -550,7 +567,7 @@ function actReady(){
 function resetWatch(readyLim,pullLim){
   const st=pullState(),pull=amPull(st);
   startPointClock({role:pull?'PULL':'READY',team:pull?st.team:other(st.team),pullEnd:st.end,
-    deadline:pull?pullLim:readyLim,
+    deadline:pull?pullLim:readyLim, pullLimit:pullLim,
     milestones:[{at:readyLim,label:'ready '+readyLim},{at:pullLim,label:'pull '+pullLim}]});
 }
 function logViol(kind){
@@ -629,13 +646,14 @@ function renderRole(){
 }
 
 function renderTimer(){
-  const box=$('#timerBox'),dl=$('#deadline');
+  const box=$('#timerBox'),dl=$('#deadline'),pb=$('#btnPull');
+  const showPull=(disp)=>{pb.style.display=disp;};
   if(!T){
     box.className='timer';
     $('#timerRole').textContent='No point in progress';
     $('#timerBig').textContent='—:—';
     $('#timerSub').textContent='Tap “+ Goal” for the team that scored, or “Start point clock” for the first pull.';
-    dl.className='deadline';dl.innerHTML='';$('#miles').innerHTML='';return;
+    dl.className='deadline';dl.innerHTML='';$('#miles').innerHTML='';showPull('none');return;
   }
   const e=elapsed();
   if(T.kind==='aux'){ // count DOWN
@@ -646,8 +664,23 @@ function renderTimer(){
     $('#timerSub').textContent=rem>0?Math.ceil(rem)+'s remaining':'time up';
     dl.className='deadline';dl.innerHTML='';
     $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${e>=m.at?'done':(m.at===nextMile(e)?'cur':'')}">${m.label}</span>`).join('');
+    showPull('none');return;
+  }
+  showPull('');
+  if(T.pulled){ // pull released — interval over, clock frozen
+    pb.textContent='✓ Pulled '+fmtClock(T.pulledAt)+' — tap to undo';pb.className='btn pulled';pb.style.width='100%';
+    const lim=Math.round(T.pullLimit||S.lim.pull),onTime=T.pulledAt<=lim;
+    $('#timerRole').textContent='✓ PULLED — '+teamName(T.team);
+    $('#timerBig').textContent=fmtClock(T.pulledAt);
+    $('#timerSub').textContent='pull released · point in play';
+    dl.className='deadline '+(onTime?'ok':'over');
+    dl.innerHTML=onTime?`pull on time <span class="lim">(${Math.round(T.pulledAt)}s ≤ ${lim}s)</span>`
+                       :`pull LATE <span class="lim">(${Math.round(T.pulledAt)}s &gt; ${lim}s limit)</span>`;
+    box.className='timer pulled';
+    $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${T.pulledAt>=m.at?'done':''}">${m.label}</span>`).join('');
     return;
   }
+  pb.textContent='Pull released ⏺';pb.className='btn primary';pb.style.width='100%';
   // BETWEEN-POINT: big number = elapsed stopwatch (always running until next goal)
   const rem=T.deadline-e;
   $('#timerRole').textContent=T.role+' — '+teamName(T.team)+(T.stopped?' (paused)':'');
@@ -705,7 +738,8 @@ function renderHistory(){
     const shade = p.ratio==='M'; // shade one ratio for visual ABBA like the sheet
     const rp = p.ratio?`<span class="pill ${p.ratio==='W'?'w':'m'}">${p.ratio==='W'?'4W':'4M'}</span>`:'';
     const v=p.viol&&p.viol.length?`<div class="small danger-text">${p.viol.map(esc).join(', ')}</div>`:'';
-    return `<tr class="${shade?'shade':''}"><td>${p.n}</td><td><b>${esc(teamName(p.by))}</b>${v}</td>
+    const pl=p.pullAt!=null?`<div class="small muted">pull ${fmtClock(p.pullAt)}</div>`:'';
+    return `<tr class="${shade?'shade':''}"><td>${p.n}</td><td><b>${esc(teamName(p.by))}</b>${pl}${v}</td>
       <td class="miniscore">${p.after[0]}–${p.after[1]}</td><td>${rp}</td></tr>`;
   }).reverse().join('');
   w.innerHTML=`<table><thead><tr><th>Pt</th><th>Scored by</th><th>Score</th><th>Ratio</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -896,7 +930,7 @@ function summaryText(){
   if(S.cards.length){L.push('');L.push('Misconduct:');S.cards.forEach(c=>L.push(` - ${({TECH:'Tech',TMF:'Blue',PMF:'Yellow',EJCT:'Red'})[c.type]} ${teamName(c.team)} ${c.player||''} (${c.score[0]}-${c.score[1]})`));}
   L.push('');
   L.push('Scoring:');
-  S.points.forEach(p=>L.push(` ${p.n}. ${teamName(p.by)} -> ${p.after[0]}-${p.after[1]} ${p.ratio?('['+(p.ratio==='W'?'4W':'4M')+']'):''} ${p.viol&&p.viol.length?'!'+p.viol.join('; '):''}`));
+  S.points.forEach(p=>L.push(` ${p.n}. ${teamName(p.by)} -> ${p.after[0]}-${p.after[1]} ${p.ratio?('['+(p.ratio==='W'?'4W':'4M')+']'):''}${p.pullAt!=null?' pull '+fmtClock(p.pullAt):''} ${p.viol&&p.viol.length?'!'+p.viol.join('; '):''}`));
   if(S.notes){L.push('');L.push('Notes: '+S.notes);}
   return L.join('\n');
 }
@@ -905,7 +939,7 @@ function fallbackCopy(t){const ta=document.createElement('textarea');ta.value=t;
 
 /* ============================ TICK LOOP (warnings/caps) ============================ */
 function tick(){
-  if(T && !T.stopped){
+  if(T && !T.stopped && !T.pulled){
     const e=elapsed();
     if(T.kind==='aux'){ // milestone + end beeps (e.g. halftime 5/2 min)
       (T.milestones||[]).forEach(m=>{
@@ -941,6 +975,7 @@ function tick(){
 
 /* ============================ EVENTS ============================ */
 $$('.scoreplus').forEach(b=>b.addEventListener('click',()=>{unlockAudio();addGoal(+b.dataset.score);}));
+$('#btnPull').addEventListener('click',()=>{unlockAudio();actPull();});
 $('#btnReady').addEventListener('click',actReady);
 $('#btnLate20').addEventListener('click',actLate20);
 $('#btnRepull').addEventListener('click',actRepull);
