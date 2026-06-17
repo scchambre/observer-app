@@ -212,13 +212,12 @@
 
     <details class="panel" style="padding:10px">
       <summary>Auxiliary clocks (timeout / halftime / disc-in)</summary>
-      <div class="grid2" style="margin-top:8px">
-        <button class="btn sm ghost" data-aux="70">Timeout 70s</button>
+      <div class="grid3" style="margin-top:8px">
         <button class="btn sm ghost" data-aux="420">Halftime 7:00</button>
         <button class="btn sm ghost" data-aux="20">Disc-in 20s</button>
         <button class="btn sm ghost" data-aux="10">Disc-in 10s</button>
       </div>
-      <div class="help">These run in the same clock display. Halftime gives 5-min &amp; 2-min calls.</div>
+      <div class="help">These run in the same clock display. Halftime gives 5-min &amp; 2-min calls. (Use the main <b>Timeout</b> button for the offence/defence setup clock.)</div>
     </details>
   </section>
 
@@ -587,16 +586,22 @@ function logViol(kind){
 }
 
 function actTimeout(){
-  // record a timeout for a team
   const t=pickTeamPrompt('Timeout for which team?');
   if(t==null)return;
-  const half=S.half;
   S._toLog=S._toLog||[];
-  S._toLog.push({team:t,half,ts:Date.now(),score:[...S.score]});
-  // start 70s timeout clock (counts down)
-  startAux(S.to.len,'TIMEOUT — '+teamName(t),[{at:S.to.len,label:'TO '+S.to.len}]);
-  beep(1,660);flash('Timeout — '+teamName(t));
-  save();renderAll();
+  S._toLog.push({team:t,half:S.half,ts:Date.now(),score:[...S.score]});
+  // Two-phase setup clock: offence sets by offLimit (70s), defence checks the
+  // disc in by defBase (90s) or 20s after offence sets, whichever is later.
+  T={kind:'timeout',startMs:Date.now(),team:t,offLimit:S.to.len,defBase:S.to.len+20,offSetAt:null,warned:[],stopped:false};
+  saveTimer();beep(1,660);flash('Timeout — '+teamName(t));save();renderAll();
+}
+function toDefLimit(){return (T&&T.offSetAt!=null)?Math.max(T.defBase,T.offSetAt+20):(T?T.defBase:0);}
+// Contextual primary button while a timeout is running: mark offence set, then end the timeout.
+function actTimeoutBtn(){
+  if(!T||T.kind!=='timeout')return;
+  if(T.offSetAt==null){T.offSetAt=elapsed();T.warned=T.warned.filter(w=>!String(w).startsWith('def'));
+    saveTimer();renderTimer();beep(1,760);flash('Offence set at '+fmtClock(T.offSetAt)+' — defence '+S.lim.late+'s to check');}
+  else {clearTimer();flash('Timeout ended — play on');}
 }
 function pickTeamPrompt(q){
   const a=teamName(0),b=teamName(1);
@@ -665,6 +670,26 @@ function renderTimer(){
     dl.className='deadline';dl.innerHTML='';
     $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${e>=m.at?'done':(m.at===nextMile(e)?'cur':'')}">${m.label}</span>`).join('');
     showPull('none');return;
+  }
+  if(T.kind==='timeout'){ // two phases: offence to set, defence to check in
+    $('#timerRole').textContent='TIMEOUT — '+teamName(T.team)+(T.stopped?' (paused)':'');
+    $('#timerBig').textContent=fmtClock(e);
+    $('#timerSub').textContent='elapsed since timeout';
+    const offRem=T.offLimit-e, dlim=toDefLimit(), defRem=dlim-e;
+    const col=r=>r<=0?'color:var(--bad)':(r<=10?'color:var(--warn)':'color:var(--ink)');
+    const offLine = T.offSetAt!=null
+      ? `<div style="font-size:17px;color:var(--ok)">OFFENCE ✓ set ${fmtClock(T.offSetAt)}</div>`
+      : `<div style="font-size:17px;${col(offRem)}">OFFENCE — ${offRem>0?Math.ceil(offRem)+'s to set':'OVER +'+fmtClock(-offRem).replace('+','')} <span class="lim">(${T.offLimit}s)</span></div>`;
+    const defLine = `<div style="font-size:17px;${col(defRem)}">DEFENCE — ${defRem>0?Math.ceil(defRem)+'s to check in':'OVER +'+fmtClock(-defRem).replace('+','')} <span class="lim">(by ${Math.round(dlim)}s)</span></div>`;
+    dl.className='deadline';dl.innerHTML=offLine+defLine;
+    const over=(T.offSetAt==null&&offRem<=0)||defRem<=0;
+    box.className='timer run'+(over?' over':(Math.min(T.offSetAt!=null?Infinity:offRem,defRem)<=10?' warnear':''));
+    $('#miles').innerHTML=`<span class="mile ${e>=T.offLimit?'done':'cur'}">offence ${T.offLimit}</span><span class="mile ${e>=dlim?'done':''}">defence ${Math.round(dlim)}</span>`;
+    showPull('');
+    const pb2=$('#btnPull');pb2.style.width='100%';
+    if(T.offSetAt==null){pb2.textContent='Offence set ✓';pb2.className='btn primary';}
+    else{pb2.textContent='Disc checked in — end timeout';pb2.className='btn ghost';}
+    return;
   }
   showPull('');
   if(T.pulled){ // pull released — interval over, clock frozen
@@ -946,6 +971,14 @@ function tick(){
         if(e>=m.at && e<m.at+0.6 && !T.warned.includes('m'+m.at)){T.warned.push('m'+m.at);beep(2,760);flash(m.label);saveTimer();}
       });
       if(e>=T.base && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);notify('Time up',T.role);flash('Time up: '+T.role);saveTimer();}
+    }else if(T.kind==='timeout'){ // offence-to-set + defence-to-check warnings
+      if(T.offSetAt==null){
+        [20,10].forEach(l=>{const m=T.offLimit-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('off'+l)){T.warned.push('off'+l);beep(l===10?2:1,l===10?990:760);flash(l+'s — offence to set');saveTimer();}});
+        if(e>=T.offLimit&&!T.warned.includes('offFIN')){T.warned.push('offFIN');beep(3,520);flash('Offence freeze!');saveTimer();}
+      }
+      const dlim=toDefLimit();
+      [20,10].forEach(l=>{const m=dlim-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('def'+l)){T.warned.push('def'+l);beep(l===10?2:1,l===10?990:760);flash(l+'s — defence to check in');saveTimer();}});
+      if(e>=dlim&&!T.warned.includes('defFIN')){T.warned.push('defFIN');beep(3,440);notify('Defence check overdue',teamName(T.team));flash('Defence check-in overdue');saveTimer();}
     }else{ // between-point: warn 20s & 10s before MY deadline, then at the deadline
       const what=T.role==='PULL'?'to pull':'for a hand';
       [20,10].forEach(lead=>{
@@ -975,7 +1008,7 @@ function tick(){
 
 /* ============================ EVENTS ============================ */
 $$('.scoreplus').forEach(b=>b.addEventListener('click',()=>{unlockAudio();addGoal(+b.dataset.score);}));
-$('#btnPull').addEventListener('click',()=>{unlockAudio();actPull();});
+$('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeout')actTimeoutBtn();else actPull();});
 $('#btnReady').addEventListener('click',actReady);
 $('#btnLate20').addEventListener('click',actLate20);
 $('#btnRepull').addEventListener('click',actRepull);
