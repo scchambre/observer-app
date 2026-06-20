@@ -363,6 +363,11 @@
     </div>
   </section>
 
+  <!-- ===== DASHBOARD PAGE ===== -->
+  <section class="page" id="page-dash">
+    <div class="panel" id="dashWrap"></div>
+  </section>
+
   <!-- ===== SHEET PAGE ===== -->
   <section class="page" id="page-sheet">
     <div class="panel" id="sheetWrap"></div>
@@ -377,6 +382,7 @@
 <!-- ===== TAB BAR ===== -->
 <nav class="tabbar" id="tabbar">
   <button data-tab="game" class="on"><span class="ic">⏱</span>Timer</button>
+  <button data-tab="dash"><span class="ic">▥</span>Dash</button>
   <button data-tab="setup"><span class="ic">⚙︎</span>Setup</button>
   <button data-tab="log"><span class="ic">▤</span>Log</button>
   <button data-tab="sheet"><span class="ic">▦</span>Sheet</button>
@@ -480,9 +486,20 @@ function startPullTeam(){ // team starting on Defence pulls the 1st point
   return 0;
 }
 function startPullEnd(){const i=sideIdx(S.teams[startPullTeam()].startSide);return i==null?S.obsEnd:i;}
+// 2nd-half reversal (6.A.3): the team that received the opening pull now pulls, from the
+// same physical end the opening pull came from. So the pull state RESETS at halftime
+// rather than continuing the 1st-half break/hold tracking.
+function secondHalfPullTeam(){return (S.teams[0].startOD==='O')?0:(S.teams[1].startOD==='O'?1:other(startPullTeam()));}
 function pullState(){ // {team,end} for the upcoming (in-progress) point
-  let team=startPullTeam(),end=startPullEnd();
-  for(const p of S.points){if(p.by===team)end=other(end);team=p.by;}
+  let team,end,replay;
+  if(S.half===2){
+    team=secondHalfPullTeam();end=startPullEnd();
+    const h2=S.points.findIndex(p=>p.half===2);
+    replay=(h2>=0)?S.points.slice(h2):[];
+  }else{
+    team=startPullTeam();end=startPullEnd();replay=S.points;
+  }
+  for(const p of replay){if(p.by===team)end=other(end);team=p.by;}
   if(S.roleFlip)end=other(end);
   return {team,end};
 }
@@ -521,7 +538,7 @@ function addGoal(by){
   const r=ratioForPoint(n);
   const pullAt=(T&&T.kind==='point'&&T.pulled)?Math.round(T.pulledAt):null;
   S.score[by]++;
-  S.points.push({n,by,ratio:r,after:[...S.score],viol:[],pullAt});
+  S.points.push({n,by,ratio:r,after:[...S.score],viol:[],pullAt,half:S.half});
   // Halftime: first team to the target, OR the half cap (e.g. 30 min) has passed.
   let isHalftime=false;
   if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget || S.halfCapHit)){
@@ -686,7 +703,51 @@ function pickTeamPrompt(q){
 }
 
 /* ============================ RENDER ============================ */
-function renderAll(){renderTopScore();renderTimer();renderCaps();renderHistory();renderWarn();renderCards();renderTO();renderSheet();renderRole();save();}
+function renderAll(){renderTopScore();renderTimer();renderCaps();renderHistory();renderWarn();renderCards();renderTO();renderDash();renderSheet();renderRole();save();}
+
+function renderDash(){
+  const n=pointNo(), st=pullState(), pull=amPull(st), recv=other(st.team), r=ratioForPoint(n), m=S.meta;
+  const tos=[[0,0],[0,0]]; (S._toLog||[]).forEach(t=>{tos[t.team][(t.half===2)?1:0]++;});
+  const mc=(team,type)=>S.cards.filter(c=>c.team===team&&c.type===type).length;
+  const pv=i=>S.warn.offside[i]+S.warn.falsestart[i];
+  const h2team=secondHalfPullTeam(), h2end=startPullEnd(), h2pull=(h2end===S.obsEnd), allow=S.to.perHalf;
+  const c=(a,b)=>`<td style="text-align:center">${a}</td><td style="text-align:center">${b}</td>`;
+  $('#dashWrap').innerHTML=`
+    <h2>Dashboard</h2>
+    <div class="small muted">${esc(m.round||'—')} · ${esc(m.field||'')} · ${esc(m.start||'')}</div>
+    <div style="font-size:26px;font-weight:800;text-align:center;margin:6px 0">${teamName(0)} ${S.score[0]} — ${S.score[1]} ${teamName(1)}</div>
+    <div style="text-align:center" class="small">Half ${S.half} · Point ${n} · ${r?ratioLabel(r):'manual'} (${ratioSeq(n)} of ratio)</div>
+    <div class="hr"></div>
+    <div style="padding:10px;border-radius:10px;background:${pull?'#eef4fe':'#eafaf0'}">
+      <b>This point:</b> ${esc(teamName(st.team))} pulls from ${esc(endLabel(st.end))}; ${esc(teamName(recv))} receives.<br>
+      <b>You:</b> ${pull?'PULL — '+S.lim.pull+'s':'READINESS — '+S.lim.ready+'s'} (at ${esc(endLabel(S.obsEnd))})
+    </div>
+    <div class="small muted" style="margin-top:6px">2nd-half opener: <b>${esc(teamName(h2team))}</b> pulls from <b>${esc(endLabel(h2end))}</b> → you'll be <b>${h2pull?'PULL (80s)':'READINESS (60s)'}</b></div>
+    <div class="hr"></div>
+    <table>
+      <thead><tr><th>Start</th><th>${esc(teamName(0))}</th><th>${esc(teamName(1))}</th></tr></thead>
+      <tbody>
+        <tr><td>O/D · side</td>${c((S.teams[0].startOD||'—')+' · '+esc(S.teams[0].startSide||'—'),(S.teams[1].startOD||'—')+' · '+esc(S.teams[1].startSide||'—'))}</tr>
+        <tr><td>Colour</td>${c(esc(S.teams[0].colour||'—'),esc(S.teams[1].colour||'—'))}</tr>
+        <tr><td>Captain</td>${c(esc(S.teams[0].captain||'—'),esc(S.teams[1].captain||'—'))}</tr>
+      </tbody>
+    </table>
+    <div class="hr"></div>
+    <table>
+      <thead><tr><th>Totals</th><th>${esc(teamName(0))}</th><th>${esc(teamName(1))}</th></tr></thead>
+      <tbody>
+        <tr><td><b>Pull violations</b></td>${c('<b>'+pv(0)+'</b>','<b>'+pv(1)+'</b>')}</tr>
+        <tr><td>· offsides</td>${c(S.warn.offside[0],S.warn.offside[1])}</tr>
+        <tr><td>· false starts</td>${c(S.warn.falsestart[0],S.warn.falsestart[1])}</tr>
+        <tr><td>Time violations</td>${c(S.warn.time[0],S.warn.time[1])}</tr>
+        <tr><td>Timeouts (H1/H2)</td>${c(tos[0][0]+'/'+tos[0][1]+' · max '+allow,tos[1][0]+'/'+tos[1][1]+' · max '+allow)}</tr>
+        <tr><td>Tech fouls</td>${c(mc(0,'TECH'),mc(1,'TECH'))}</tr>
+        <tr><td>TMF (blue)</td>${c(mc(0,'TMF'),mc(1,'TMF'))}</tr>
+        <tr><td>PMF (yellow)</td>${c(mc(0,'PMF'),mc(1,'PMF'))}</tr>
+        <tr><td>Ejections (red)</td>${c(mc(0,'EJCT'),mc(1,'EJCT'))}</tr>
+      </tbody>
+    </table>`;
+}
 
 function renderTopScore(){
   $('#tn0').textContent=teamName(0);$('#tn1').textContent=teamName(1);
@@ -910,7 +971,7 @@ function renderTO(){
     html+=`<tr><td><b>${esc(teamName(i))}</b></td><td>${used[i][0]} / ${allow}</td><td>${used[i][1]} / ${allow}</td><td>${fl}</td></tr>`;
   }
   html+=`</tbody></table>`;
-  if(log.length){html+=`<div class="small muted" style="margin-top:6px">Last: ${log.slice(-3).reverse().map(t=>esc(teamName(t.team))+' '+t.score[0]+'–'+t.score[1]).join(' · ')}</div>`;}
+  if(log.length){html+=`<div class="small muted" style="margin-top:6px">Last: ${log.slice(-3).reverse().map(t=>esc(teamName(t.team))+(t.score?' '+t.score[0]+'–'+t.score[1]:'')+(t.type?' ('+t.type+')':'')).join(' · ')}</div>`;}
   $('#toTable').innerHTML=html;
 }
 
