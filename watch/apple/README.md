@@ -1,12 +1,14 @@
 # Ultimate Observer — Apple Watch app
 
-A standalone watchOS companion to the web app. It does the three things you wanted on the wrist:
+A standalone watchOS companion to the web app:
 
-- **Score** — `＋` button per team; tapping one starts the next between-points clock.
-- **Between-points clock** — counts up (elapsed since the goal) with the **80s pull / 60s readiness** deadline derived from which end the pull comes from, exactly like the web app. Haptic buzzes at **20s** and **10s** before your deadline, and a strong buzz when you go **over**.
-- **Gender ratio** — the ABBA ratio for the current point (`4W` / `4M`), auto-advancing every point.
+- **Score** — `＋` button per team; tapping one starts the next point's clock.
+- **Between-points STOPWATCH** — counts **up** (elapsed since the goal) with your **80s pull / 60s readiness** deadline shown beneath, derived from which end the pull comes from. Haptic buzzes at **20s** and **10s** before your deadline, and a strong buzz **over**. End-aware, including the **2nd-half reversal**.
+- **Halftime COUNTDOWN** — `Half` button runs a 5-min countdown (buzz at 1-min and time-up) and marks 2nd half.
+- **Timeout** — `Timeout` button runs a 70s countdown.
+- **Gender ratio** — current ABBA ratio with **1st / 2nd of the pair** (e.g. `4M 2nd`).
 
-Plus: **Pull released** (freezes the clock, judges on-time vs the pull limit), **Undo**, and a **Setup** screen (team names, end labels, who pulls first + from which end, point-1 ratio, your end, and a "role looks wrong" flip).
+Plus **Start pt**, **Undo**, and a **Setup** screen (team names, end labels, who pulls first + from which end, point-1 ratio, your end, "role looks wrong" flip).
 
 It's a **standalone** watch app — no phone pairing or connectivity needed on the field. Each observer runs their own. State is saved on the watch and survives relaunch.
 

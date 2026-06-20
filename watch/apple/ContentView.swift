@@ -2,226 +2,180 @@ import SwiftUI
 import WatchKit
 
 // =====================================================================
-//  Ultimate Observer — Apple Watch companion
-//  Standalone watchOS app: score, between-points clock (80s pull / 60s
-//  readiness, end-aware), and ABBA gender ratio. Mirrors the timing
-//  logic of the web app. watchOS 10+.
+//  Ultimate Observer — Apple Watch companion (standalone, watchOS 10+)
+//  Score · count-up STOPWATCH between points · COUNTDOWN for the 5-min
+//  half · gender ratio with 1st/2nd-of-pair · timeout. End-aware role
+//  with the 2nd-half reversal, matching the web app.
 // =====================================================================
 
-// MARK: - Models
-
 enum Ratio: String, Codable, Hashable {
-    case women = "W"
-    case men   = "M"
+    case women = "W", men = "M"
     var short: String { self == .women ? "4W" : "4M" }
-    var long:  String { self == .women ? "4W / 3M" : "4M / 3W" }
     var opposite: Ratio { self == .women ? .men : .women }
 }
+enum ClockMode: String, Codable { case none, point, half, timeout }
 
 struct Point: Codable, Identifiable {
     var id = UUID()
-    var by: Int            // 0 or 1
-    var scoreA: Int
-    var scoreB: Int
+    var by: Int
+    var half: Int
     var ratio: Ratio?
-    var pullAt: Int?
 }
 
 final class GameState: ObservableObject {
-    static let key = "observerwatch.v1"
+    static let key = "observerwatch.v2"
 
-    // --- Config (role-affecting setters recompute the running clock) ---
-    @Published var teamNames: [String] = ["Team 1", "Team 2"] { didSet { saveIfLoaded() } }
-    @Published var endLabels: [String] = ["End A", "End B"]   { didSet { saveIfLoaded() } }
-    @Published var obsEnd: Int     = 0     { didSet { roleChanged() } }   // end the observer stands at
-    @Published var startDTeam: Int = 0     { didSet { roleChanged() } }   // team pulling the 1st point
-    @Published var startDEnd: Int  = 0     { didSet { roleChanged() } }   // end that 1st pull comes from
-    @Published var ratioA: Ratio   = .women { didSet { saveIfLoaded() } } // point-1 ratio (the "A" in ABBA)
-    @Published var roleFlip: Bool  = false  { didSet { roleChanged() } }  // manual parity correction
-    @Published var pullLimit: Int  = 80     { didSet { roleChanged() } }
-    @Published var readyLimit: Int = 60     { didSet { roleChanged() } }
+    // --- Config ---
+    @Published var teamNames = ["Team 1", "Team 2"] { didSet { saveIfLoaded() } }
+    @Published var endLabels = ["Rocks", "Forest"]  { didSet { saveIfLoaded() } }
+    @Published var obsEnd = 0      { didSet { roleChanged() } }
+    @Published var startDTeam = 0  { didSet { roleChanged() } }   // team pulling 1st point
+    @Published var startDEnd = 0   { didSet { roleChanged() } }   // end the 1st pull comes from
+    @Published var ratioA: Ratio = .women { didSet { saveIfLoaded() } }
+    @Published var roleFlip = false { didSet { roleChanged() } }
+    @Published var halfTarget = 8  { didSet { saveIfLoaded() } }
+    @Published var halfLen = 5     { didSet { saveIfLoaded() } }  // minutes
+    @Published var pullLimit = 80  { didSet { roleChanged() } }
+    @Published var readyLimit = 60 { didSet { roleChanged() } }
+    @Published var toLen = 70      { didSet { saveIfLoaded() } }
 
     // --- Game ---
-    @Published var score: [Int] = [0, 0]
+    @Published var score = [0, 0]
     @Published var points: [Point] = []
+    @Published var half = 1
 
     // --- Clock ---
+    @Published var mode: ClockMode = .none
     @Published var clockStart: Date? = nil
-    @Published var pulled: Bool = false
-    @Published var pulledAt: Double = 0
-    @Published var deadline: Double = 80
-    @Published var role: String = ""      // "PULL" or "READY"
-    @Published var clockTeam: Int = 0
+    @Published var deadline = 80.0       // point mode: my 80/60 deadline
+    @Published var role = ""             // "PULL" / "READY"
+    @Published var clockTeam = 0
+    @Published var auxBase = 0.0         // half / timeout countdown length
+    @Published var auxLabel = ""
 
     private var loaded = true
     private var ticker: Timer?
-    private var firedHaptics = Set<String>()
+    private var fired = Set<String>()
 
-    // MARK: Derived
-
+    // --- Derived ---
+    func other(_ i: Int) -> Int { i == 0 ? 1 : 0 }
     var pointNo: Int { score[0] + score[1] + 1 }
-
     func ratio(for n: Int) -> Ratio { ((n / 2) % 2 == 0) ? ratioA : ratioA.opposite }
+    func ratioSeq(_ n: Int) -> String { (n == 1) ? "1st" : (n % 2 == 0 ? "1st" : "2nd") }
     var currentRatio: Ratio { ratio(for: pointNo) }
+    var currentSeq: String { ratioSeq(pointNo) }
 
-    /// (pulling team, end the pull comes from) for the point about to be played.
-    /// Pull stays at the same end on an offence hold, flips on a defensive break.
+    var secondHalfPullTeam: Int { startDTeam == 0 ? 1 : 0 }   // team that received opening now pulls
     var pullStateNow: (team: Int, end: Int) {
-        var team = startDTeam
-        var end  = startDEnd
-        for p in points {
-            if p.by == team { end = 1 - end }   // pulling/defending team scored -> break -> flip
-            team = p.by
+        var team: Int, end: Int, replay: [Point]
+        if half == 2 {                                       // 2nd-half reversal reset
+            team = secondHalfPullTeam; end = startDEnd
+            if let h2 = points.firstIndex(where: { $0.half == 2 }) { replay = Array(points[h2...]) } else { replay = [] }
+        } else {
+            team = startDTeam; end = startDEnd; replay = points
         }
-        if roleFlip { end = 1 - end }
+        for p in replay { if p.by == team { end = other(end) }; team = p.by }
+        if roleFlip { end = other(end) }
         return (team, end)
     }
     var amPull: Bool { pullStateNow.end == obsEnd }
 
-    func elapsed(at date: Date = Date()) -> Double {
+    func elapsed(at d: Date = Date()) -> Double {
         guard let s = clockStart else { return 0 }
-        if pulled { return pulledAt }
-        return max(0, date.timeIntervalSince(s))
+        return max(0, d.timeIntervalSince(s))
     }
 
-    // MARK: Actions
-
+    // --- Actions ---
     func addGoal(_ by: Int) {
-        let n = pointNo
-        let r = ratio(for: n)
-        let pa: Int? = (clockStart != nil && pulled) ? Int(pulledAt.rounded()) : nil
+        let n = pointNo, r = ratio(for: n)
         score[by] += 1
-        points.append(Point(by: by, scoreA: score[0], scoreB: score[1], ratio: r, pullAt: pa))
+        points.append(Point(by: by, half: half, ratio: r))
         WKInterfaceDevice.current().play(.click)
+        if half == 1 && (score[0] >= halfTarget || score[1] >= halfTarget) { half = 2 }
         startBetweenPoint()
     }
-
-    func undoGoal() {
-        guard let last = points.last else { return }
-        points.removeLast()
-        score[last.by] = max(0, score[last.by] - 1)
-        stopClock()
-        save()
+    func undo() {
+        guard let l = points.last else { return }
+        points.removeLast(); score[l.by] = max(0, score[l.by] - 1)
+        half = points.last?.half ?? 1
+        stop(); save()
     }
-
     func startBetweenPoint() {
-        let st = pullStateNow
-        let pull = st.end == obsEnd
-        role = pull ? "PULL" : "READY"
-        clockTeam = pull ? st.team : (1 - st.team)
+        let st = pullStateNow, pull = (st.end == obsEnd)
+        role = pull ? "PULL" : "READY"; clockTeam = pull ? st.team : other(st.team)
         deadline = Double(pull ? pullLimit : readyLimit)
-        clockStart = Date()
-        pulled = false
-        pulledAt = 0
-        firedHaptics.removeAll()
-        startTicking()
-        save()
+        mode = .point; clockStart = Date(); fired.removeAll(); startTicking(); save()
     }
-
-    func markPull() {
-        guard let s = clockStart else { return }
-        if pulled {                                   // undo
-            pulled = false
-            clockStart = Date().addingTimeInterval(-pulledAt)
-            startTicking()
-        } else {
-            pulledAt = max(0, Date().timeIntervalSince(s))
-            pulled = true
-            ticker?.invalidate()
-            WKInterfaceDevice.current().play(pulledAt <= deadline ? .success : .failure)
-        }
-        save()
+    func startHalftime() {
+        if half == 1 { half = 2 }
+        mode = .half; auxBase = Double(halfLen * 60); clockStart = Date(); fired.removeAll(); startTicking(); save()
     }
-
-    func stopClock() {
-        ticker?.invalidate(); ticker = nil
-        clockStart = nil; pulled = false
+    func startTimeout() {
+        mode = .timeout; auxBase = Double(toLen); clockStart = Date(); fired.removeAll(); startTicking(); save()
     }
+    func stop() { ticker?.invalidate(); ticker = nil; mode = .none; clockStart = nil; save() }
+    func resetGame() { score = [0, 0]; points = []; half = 1; stop() }
+    func flipRole() { roleFlip.toggle() }
 
-    func resetGame() {
-        score = [0, 0]; points = []
-        stopClock()
-        save()
-    }
-
-    func flipRole() { roleFlip.toggle() }   // didSet recomputes + saves
-
-    // MARK: Ticking / haptics (foreground)
-
+    // --- Ticking / haptics ---
     func startTicking() {
         ticker?.invalidate()
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
     }
-
     private func tick() {
-        guard let s = clockStart, !pulled else { return }
+        guard let s = clockStart else { return }
         let e = Date().timeIntervalSince(s)
-        for lead in [20.0, 10.0] {
-            let mark = deadline - lead
-            let k = "lead\(Int(lead))"
-            if mark > 0, e >= mark, !firedHaptics.contains(k) {
-                firedHaptics.insert(k)
-                WKInterfaceDevice.current().play(lead == 10 ? .notification : .start)
+        if mode == .point {
+            for lead in [20.0, 10.0] {
+                let m = deadline - lead, k = "d\(Int(lead))"
+                if m > 0, e >= m, !fired.contains(k) { fired.insert(k); WKInterfaceDevice.current().play(lead == 10 ? .notification : .start) }
             }
-        }
-        if e >= deadline, !firedHaptics.contains("over") {
-            firedHaptics.insert("over")
-            WKInterfaceDevice.current().play(.failure)
+            if e >= deadline, !fired.contains("over") { fired.insert("over"); WKInterfaceDevice.current().play(.failure) }
+        } else if mode == .half || mode == .timeout {
+            for lead in [60.0, 10.0] {
+                let m = auxBase - lead, k = "a\(Int(lead))"
+                if m > 0, e >= m, !fired.contains(k) { fired.insert(k); WKInterfaceDevice.current().play(.notification) }
+            }
+            if e >= auxBase, !fired.contains("end") { fired.insert("end"); WKInterfaceDevice.current().play(.failure) }
         }
     }
-
     private func roleChanged() {
         guard loaded else { return }
-        if clockStart != nil, !pulled {
-            let st = pullStateNow
-            let pull = st.end == obsEnd
-            role = pull ? "PULL" : "READY"
-            clockTeam = pull ? st.team : (1 - st.team)
+        if mode == .point, clockStart != nil {
+            let st = pullStateNow, pull = (st.end == obsEnd)
+            role = pull ? "PULL" : "READY"; clockTeam = pull ? st.team : other(st.team)
             deadline = Double(pull ? pullLimit : readyLimit)
         }
         save()
     }
     private func saveIfLoaded() { if loaded { save() } }
 
-    // MARK: Persistence (UserDefaults)
-
-    struct Snapshot: Codable {
-        var teamNames: [String]; var endLabels: [String]; var obsEnd: Int
-        var startDTeam: Int; var startDEnd: Int; var ratioA: Ratio; var roleFlip: Bool
-        var pullLimit: Int; var readyLimit: Int
-        var score: [Int]; var points: [Point]
-        var clockStart: Date?; var pulled: Bool; var pulledAt: Double
-        var deadline: Double; var role: String; var clockTeam: Int
+    // --- Persistence ---
+    struct Snap: Codable {
+        var teamNames: [String]; var endLabels: [String]; var obsEnd: Int; var startDTeam: Int; var startDEnd: Int
+        var ratioA: Ratio; var roleFlip: Bool; var halfTarget: Int; var halfLen: Int; var pullLimit: Int; var readyLimit: Int; var toLen: Int
+        var score: [Int]; var points: [Point]; var half: Int
+        var mode: ClockMode; var clockStart: Date?; var deadline: Double; var role: String; var clockTeam: Int; var auxBase: Double
     }
-
     func save() {
-        let s = Snapshot(teamNames: teamNames, endLabels: endLabels, obsEnd: obsEnd,
-                         startDTeam: startDTeam, startDEnd: startDEnd, ratioA: ratioA, roleFlip: roleFlip,
-                         pullLimit: pullLimit, readyLimit: readyLimit,
-                         score: score, points: points,
-                         clockStart: clockStart, pulled: pulled, pulledAt: pulledAt,
-                         deadline: deadline, role: role, clockTeam: clockTeam)
-        if let d = try? JSONEncoder().encode(s) {
-            UserDefaults.standard.set(d, forKey: Self.key)
-        }
+        let s = Snap(teamNames: teamNames, endLabels: endLabels, obsEnd: obsEnd, startDTeam: startDTeam, startDEnd: startDEnd,
+                     ratioA: ratioA, roleFlip: roleFlip, halfTarget: halfTarget, halfLen: halfLen, pullLimit: pullLimit, readyLimit: readyLimit, toLen: toLen,
+                     score: score, points: points, half: half,
+                     mode: mode, clockStart: clockStart, deadline: deadline, role: role, clockTeam: clockTeam, auxBase: auxBase)
+        if let d = try? JSONEncoder().encode(s) { UserDefaults.standard.set(d, forKey: Self.key) }
     }
-
     static func load() -> GameState {
         let g = GameState()
-        if let d = UserDefaults.standard.data(forKey: key),
-           let s = try? JSONDecoder().decode(Snapshot.self, from: d) {
+        if let d = UserDefaults.standard.data(forKey: key), let s = try? JSONDecoder().decode(Snap.self, from: d) {
             g.loaded = false
-            g.teamNames = s.teamNames; g.endLabels = s.endLabels; g.obsEnd = s.obsEnd
-            g.startDTeam = s.startDTeam; g.startDEnd = s.startDEnd; g.ratioA = s.ratioA; g.roleFlip = s.roleFlip
-            g.pullLimit = s.pullLimit; g.readyLimit = s.readyLimit
-            g.score = s.score; g.points = s.points
-            g.clockStart = s.clockStart; g.pulled = s.pulled; g.pulledAt = s.pulledAt
-            g.deadline = s.deadline; g.role = s.role; g.clockTeam = s.clockTeam
+            g.teamNames = s.teamNames; g.endLabels = s.endLabels; g.obsEnd = s.obsEnd; g.startDTeam = s.startDTeam; g.startDEnd = s.startDEnd
+            g.ratioA = s.ratioA; g.roleFlip = s.roleFlip; g.halfTarget = s.halfTarget; g.halfLen = s.halfLen
+            g.pullLimit = s.pullLimit; g.readyLimit = s.readyLimit; g.toLen = s.toLen
+            g.score = s.score; g.points = s.points; g.half = s.half
+            g.mode = s.mode; g.clockStart = s.clockStart; g.deadline = s.deadline; g.role = s.role; g.clockTeam = s.clockTeam; g.auxBase = s.auxBase
             g.loaded = true
         }
-        if g.clockStart != nil && !g.pulled { g.startTicking() }
+        if g.clockStart != nil && g.mode != .none { g.startTicking() }
         return g
     }
 
@@ -230,8 +184,7 @@ final class GameState: ObservableObject {
 }
 
 func clockString(_ sec: Double) -> String {
-    let neg = sec < 0
-    let s = Int(abs(sec).rounded())
+    let neg = sec < 0, s = Int(abs(sec).rounded())
     return (neg ? "+" : "") + "\(s/60):" + String(format: "%02d", s % 60)
 }
 
@@ -244,34 +197,29 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 8) {
+                VStack(spacing: 7) {
                     scoreRow
                     clockCard
-                    goalButtons
-                    if game.clockStart != nil {
-                        Button { game.markPull() } label: {
-                            Label(game.pulled ? "Pulled \(clockString(game.pulledAt)) — undo" : "Pull released",
-                                  systemImage: game.pulled ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(game.pulled ? .green : .blue)
-                        .controlSize(.small)
-                    } else {
-                        Button { game.startBetweenPoint() } label: {
-                            Label("Start clock", systemImage: "play.fill").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    HStack(spacing: 6) { goalBtn(0); goalBtn(1) }
+                    HStack(spacing: 6) {
+                        smallBtn("Timeout", "pause.circle") { game.startTimeout() }
+                        smallBtn("Half \(game.halfLen)m", "clock") { game.startHalftime() }
                     }
-                    bottomRow
+                    HStack(spacing: 6) {
+                        smallBtn("Start pt", "play") { game.startBetweenPoint() }
+                        smallBtn("Undo", "arrow.uturn.backward") { game.undo() }
+                    }
+                    NavigationLink { SettingsView(game: game) } label: {
+                        Label("Setup", systemImage: "gearshape.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
                 }
                 .padding(.horizontal, 2)
             }
             .navigationTitle("Observer")
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active, game.clockStart != nil, !game.pulled { game.startTicking() }
+        .onChange(of: scenePhase) { _, p in
+            if p == .active, game.clockStart != nil, game.mode != .none { game.startTicking() }
         }
     }
 
@@ -279,81 +227,67 @@ struct ContentView: View {
         HStack(spacing: 4) {
             Text("\(game.score[0])–\(game.score[1])").font(.title3.bold()).monospacedDigit()
             Spacer(minLength: 2)
-            Text(game.currentRatio.short)
+            Text("\(game.currentRatio.short) \(game.currentSeq)")
                 .font(.caption2.bold())
                 .padding(.horizontal, 6).padding(.vertical, 2)
                 .background(game.currentRatio == .women ? Color.pink.opacity(0.30) : Color.blue.opacity(0.30))
                 .clipShape(Capsule())
-            Text("Pt \(game.pointNo)").font(.caption2).foregroundStyle(.secondary)
+            Text("H\(game.half)·\(game.pointNo)").font(.caption2).foregroundStyle(.secondary)
         }
     }
 
     private var clockCard: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { context in
             let e = game.elapsed(at: context.date)
-            let rem = game.deadline - e
             VStack(spacing: 2) {
-                if game.clockStart == nil {
-                    Text("no point running").font(.caption2).foregroundStyle(.secondary)
-                    Text("–:–").font(.system(size: 38, weight: .bold, design: .rounded))
-                } else if game.pulled {
-                    Text("✓ PULLED · \(game.name(game.clockTeam))").font(.caption2).foregroundStyle(.green)
-                    Text(clockString(game.pulledAt)).font(.system(size: 38, weight: .bold, design: .rounded))
-                        .monospacedDigit().foregroundStyle(.green)
-                    Text(game.pulledAt <= game.deadline ? "pull on time" : "pull late")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text("\(game.role) · \(game.name(game.clockTeam))").font(.caption2).foregroundStyle(.secondary)
-                    Text(clockString(e)).font(.system(size: 38, weight: .bold, design: .rounded)).monospacedDigit()
-                    Text(rem > 0 ? "\(Int(ceil(rem)))s \(game.role == "PULL" ? "to pull" : "for hand")"
-                                 : "OVER +\(clockString(-rem))")
+                switch game.mode {
+                case .point:
+                    let rem = game.deadline - e
+                    Text("\(game.role) · \(game.name(game.clockTeam))").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(clockString(e)).font(.system(size: 40, weight: .bold, design: .rounded)).monospacedDigit()
+                    Text(rem > 0 ? "\(Int(ceil(rem)))s \(game.role == "PULL" ? "to pull" : "for hand")" : "OVER +\(clockString(-rem))")
                         .font(.caption.bold())
-                        .foregroundStyle(rem <= 0 ? .red : (rem <= 12 ? .orange : .primary))
+                        .foregroundStyle(rem <= 0 ? .red : (rem <= 12 ? .orange : .secondary))
+                case .half, .timeout:
+                    let rem = game.auxBase - e
+                    Text(game.mode == .half ? "HALFTIME" : "TIMEOUT").font(.caption2).foregroundStyle(.secondary)
+                    Text(clockString(max(0, rem))).font(.system(size: 40, weight: .bold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(rem <= 0 ? .red : .primary)
+                    Text(rem > 0 ? "remaining" : "time up").font(.caption2).foregroundStyle(.secondary)
+                case .none:
+                    Text("no point running").font(.caption2).foregroundStyle(.secondary)
+                    Text("–:–").font(.system(size: 40, weight: .bold, design: .rounded))
+                    Text("tap Start pt or + a goal").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(clockBG(rem: rem))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(maxWidth: .infinity).padding(.vertical, 6)
+            .background(clockBG(e)).clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+    private func clockBG(_ e: Double) -> Color {
+        switch game.mode {
+        case .none: return Color.gray.opacity(0.15)
+        case .point:
+            let rem = game.deadline - e
+            if rem <= 0 { return Color.red.opacity(0.22) }
+            if rem <= 12 { return Color.orange.opacity(0.20) }
+            return Color.blue.opacity(0.18)
+        case .half, .timeout:
+            return (game.auxBase - e) <= 0 ? Color.red.opacity(0.22) : Color.green.opacity(0.16)
         }
     }
 
-    private func clockBG(rem: Double) -> Color {
-        if game.clockStart == nil { return Color.gray.opacity(0.15) }
-        if game.pulled { return Color.green.opacity(0.18) }
-        if rem <= 0 { return Color.red.opacity(0.22) }
-        if rem <= 12 { return Color.orange.opacity(0.20) }
-        return Color.blue.opacity(0.18)
-    }
-
-    private var goalButtons: some View {
-        HStack(spacing: 6) {
-            goalBtn(0); goalBtn(1)
-        }
-    }
     private func goalBtn(_ i: Int) -> some View {
         Button { game.addGoal(i) } label: {
             VStack(spacing: 0) {
                 Text("＋").font(.headline)
                 Text(game.name(i)).font(.caption2).lineLimit(1).minimumScaleFactor(0.6)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(i == 0 ? .blue : .indigo)
+            }.frame(maxWidth: .infinity)
+        }.buttonStyle(.borderedProminent).tint(i == 0 ? .blue : .indigo)
     }
-
-    private var bottomRow: some View {
-        HStack {
-            Button { game.undoGoal() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
-                .controlSize(.small)
-            Spacer()
-            NavigationLink { SettingsView(game: game) } label: { Image(systemName: "gearshape.fill") }
-                .controlSize(.small)
-        }
-        .font(.caption2)
-        .buttonStyle(.bordered)
-        .padding(.top, 2)
+    private func smallBtn(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Label(title, systemImage: icon).font(.caption2).frame(maxWidth: .infinity) }
+            .buttonStyle(.bordered).controlSize(.small)
     }
 }
 
@@ -361,7 +295,6 @@ struct ContentView: View {
 
 struct SettingsView: View {
     @ObservedObject var game: GameState
-
     var body: some View {
         Form {
             Section("Teams") {
@@ -372,22 +305,18 @@ struct SettingsView: View {
                 TextField("End A", text: $game.endLabels[0])
                 TextField("End B", text: $game.endLabels[1])
                 Picker("You're at", selection: $game.obsEnd) {
-                    Text(game.endName(0)).tag(0)
-                    Text(game.endName(1)).tag(1)
+                    Text(game.endName(0)).tag(0); Text(game.endName(1)).tag(1)
                 }
             }
             Section("Game start") {
                 Picker("Pulls first", selection: $game.startDTeam) {
-                    Text(game.name(0)).tag(0)
-                    Text(game.name(1)).tag(1)
+                    Text(game.name(0)).tag(0); Text(game.name(1)).tag(1)
                 }
                 Picker("Pull from", selection: $game.startDEnd) {
-                    Text(game.endName(0)).tag(0)
-                    Text(game.endName(1)).tag(1)
+                    Text(game.endName(0)).tag(0); Text(game.endName(1)).tag(1)
                 }
                 Picker("Point 1 ratio", selection: $game.ratioA) {
-                    Text("4W / 3M").tag(Ratio.women)
-                    Text("4M / 3W").tag(Ratio.men)
+                    Text("4W / 3M").tag(Ratio.women); Text("4M / 3W").tag(Ratio.men)
                 }
             }
             Section("Role") {
