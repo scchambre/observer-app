@@ -9,6 +9,7 @@
     "halfCap": 30,
     "softCap": 55,
     "hardCap": 60,
+    "halfLen": 5,
     "toPerHalf": 1,
     "toFloater": 0,
     "toLen": 70,

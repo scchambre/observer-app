@@ -124,7 +124,7 @@
   .tag.ejct{background:#fdecec;border-color:#e7a9a9;color:var(--bad);}
   .flash{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100;background:#101418;color:#fff;
     padding:12px 18px;border-radius:12px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);opacity:0;pointer-events:none;
-    transition:opacity .2s;max-width:90%;text-align:center;}
+    transition:opacity .2s;max-width:92%;text-align:center;white-space:pre-line;font-size:14px;line-height:1.35;}
   .flash.show{opacity:1;}
   .help{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
   details summary{font-weight:700;cursor:pointer;padding:6px 0;}
@@ -213,7 +213,7 @@
     <details class="panel" style="padding:10px">
       <summary>Auxiliary clocks (timeout / halftime / disc-in)</summary>
       <div class="grid3" style="margin-top:8px">
-        <button class="btn sm ghost" data-aux="420">Halftime 7:00</button>
+        <button class="btn sm ghost" id="btnHalftime">Halftime</button>
         <button class="btn sm ghost" data-aux="20">Disc-in 20s</button>
         <button class="btn sm ghost" data-aux="10">Disc-in 10s</button>
       </div>
@@ -248,9 +248,10 @@
 
     <div class="panel">
       <h2>Format &amp; caps</h2>
-      <div class="row">
-        <label class="fld"><span>Game total (goals)</span><input id="f_gametotal" type="number" inputmode="numeric" value="15"></label>
-        <label class="fld"><span>Halftime target</span><input id="f_halftarget" type="number" inputmode="numeric"></label>
+      <div class="grid3">
+        <label class="fld"><span>Game total</span><input id="f_gametotal" type="number" inputmode="numeric" value="15"></label>
+        <label class="fld"><span>½ target</span><input id="f_halftarget" type="number" inputmode="numeric"></label>
+        <label class="fld"><span>Halftime (min)</span><input id="f_halflen" type="number" inputmode="numeric" value="7"></label>
       </div>
       <div class="grid3">
         <label class="fld"><span>Half cap (min)</span><input id="f_halfcap" type="number" inputmode="numeric"></label>
@@ -389,7 +390,7 @@ const PRESET = window.EVENT_PRESET || null;
 const KEY='uc_observer_v1'+(PRESET&&PRESET.id?('_'+PRESET.id):'');
 const DEF=()=>({
   meta:{event:'',org:'',div:'Mixed',round:'',date:'',field:'',start:''},
-  fmt:{gameTotal:15,halfTarget:8,halfCap:null,softCap:null,hardCap:null},
+  fmt:{gameTotal:15,halfTarget:8,halfCap:null,softCap:null,hardCap:null,halfLen:7},
   to:{perHalf:2,floater:0,len:70},
   lim:{line:50,ready:60,pull:80,late:20,rpr:20,rpp:40},
   ratio:{method:'ABBA',A:'W'},
@@ -405,6 +406,7 @@ const DEF=()=>({
   half:1,
   points:[],            // {n,by,ratio,after:[a,b],dur,viol:[]}
   warn:{offside:[0,0],falsestart:[0,0],time:[0,0]},
+  violLog:[],           // {label,team,cons,score,ts}
   cards:[],             // {type,team,player,ts,score:[a,b]}
   capsFired:{half:false,soft:false,hard:false},
   notes:''
@@ -421,6 +423,7 @@ function applyPresetDefaults(s){
   if(r){
     if(r.gameTotal!=null)s.fmt.gameTotal=r.gameTotal;if(r.halfTarget!=null)s.fmt.halfTarget=r.halfTarget;
     if(r.halfCap!=null)s.fmt.halfCap=r.halfCap;if(r.softCap!=null)s.fmt.softCap=r.softCap;if(r.hardCap!=null)s.fmt.hardCap=r.hardCap;
+    if(r.halfLen!=null)s.fmt.halfLen=r.halfLen;
     if(r.toPerHalf!=null)s.to.perHalf=r.toPerHalf;if(r.toFloater!=null)s.to.floater=r.toFloater;if(r.toLen!=null)s.to.len=r.toLen;
     if(r.ratioMethod)s.ratio.method=r.ratioMethod;
   }
@@ -483,7 +486,7 @@ function amPull(st){return (st||pullState()).end===S.obsEnd;}
 function pullingTeam(){return pullState().team;}
 function receivingTeam(){return other(pullState().team);}
 
-function flash(msg){const f=$('#flash');f.textContent=msg;f.classList.add('show');clearTimeout(f._t);f._t=setTimeout(()=>f.classList.remove('show'),2600);}
+function flash(msg,ms){const f=$('#flash');f.textContent=msg;f.classList.add('show');clearTimeout(f._t);f._t=setTimeout(()=>f.classList.remove('show'),ms||2600);}
 
 /* sound + vibrate */
 let AC;
@@ -599,22 +602,48 @@ function logViol(kind){
   if(t==null)return;
   S.warn[kind][t]++;
   const label={offside:'Offsides',falsestart:'False start',time:'Time violation'}[kind];
-  if(S.points.length)S.points[S.points.length-1].viol.push(label+' ('+teamName(t)+')');
-  beep(1,520);flash(label+' — '+teamName(t)+(S.warn[kind][t]===1?' (warning)':' (#'+S.warn[kind][t]+')'));
-  // The manual resets the watch as soon as an offsides / time-violation warning is called.
-  resetWatch(S.lim.rpr,S.lim.rpp);
+  const cons=violConsequence(kind,t);
+  S.violLog=S.violLog||[];
+  S.violLog.push({label,team:t,cons,score:[...S.score],pt:pointNo(),ts:Date.now()});
+  beep(1,520);
+  flash(label+' — '+teamName(t)+'\n→ '+cons,6500);
   save();renderAll();
+}
+// 2026-27 consequences (9.D.4 pull violations / 9.K.6 time violations). Informational —
+// the observer applies the outcome; the app no longer auto-resets the clock.
+function violConsequence(kind,t){
+  if(kind==='offside'){
+    const pv=S.warn.offside[t]+S.warn.falsestart[t]; // pull violations accumulate together (9.D.4.a)
+    return (pv<=1
+      ? 'receiving may take the disc at the BRICK (end zone they defend)'
+      : 'receiving may take the disc at MIDFIELD (2nd+ pull violation)')
+      +'. Contested → re-pull.';
+  }
+  if(kind==='falsestart'){
+    return 'play stops after the pull; restart timeout-style — offence 10s to set, defence 20s to check, disc at the put-in spot';
+  }
+  const tv=S.warn.time[t];
+  return tv<=1
+    ? 'WARNING (first time violation)'
+    : 'a team timeout is assessed (+ time extension). No TOs left → receiving: disc at midpoint of the end zone they defend; pulling: receiving starts at midfield';
 }
 
 function actTimeout(){
   const t=pickTeamPrompt('Timeout for which team?');
   if(t==null)return;
+  const duringPlay=confirm('During-play timeout?\n\nOK = during play — offence sets by '+S.to.len+'s, defence checks the disc in by '+(S.to.len+20)+'s.\n\nCancel = between points (before the pull) — '+S.to.len+'s suspension, then re-signal readiness & re-pull.');
   S._toLog=S._toLog||[];
-  S._toLog.push({team:t,half:S.half,ts:Date.now(),score:[...S.score]});
-  // Two-phase setup clock: offence sets by offLimit (70s), defence checks the
-  // disc in by defBase (90s) or 20s after offence sets, whichever is later.
-  T={kind:'timeout',startMs:Date.now(),team:t,offLimit:S.to.len,defBase:S.to.len+20,offSetAt:null,warned:[],stopped:false};
-  saveTimer();beep(1,660);flash('Timeout — '+teamName(t));save();renderAll();
+  S._toLog.push({team:t,half:S.half,ts:Date.now(),score:[...S.score],type:duringPlay?'play':'between'});
+  if(duringPlay){
+    // Two-phase setup clock: offence sets by offLimit (70s), defence checks the
+    // disc in by defBase (90s) or 20s after offence sets, whichever is later.
+    T={kind:'timeout',startMs:Date.now(),team:t,offLimit:S.to.len,defBase:S.to.len+20,offSetAt:null,warned:[],stopped:false};
+    saveTimer();beep(1,660);flash('Timeout (during play) — '+teamName(t));
+  }else{
+    startAux(S.to.len,'TIMEOUT (between pts) — '+teamName(t),[{at:S.to.len,label:'resume'}]);
+    beep(1,660);flash('Between-points TO — '+teamName(t)+'\n'+S.to.len+'s suspension, then “Start point clock” to re-pull (readiness resets)',6500);
+  }
+  save();renderAll();
 }
 function toDefLimit(){return (T&&T.offSetAt!=null)?Math.max(T.defBase,T.offSetAt+20):(T?T.defBase:0);}
 // Contextual primary button while a timeout is running: mark offence set, then end the timeout.
@@ -801,6 +830,13 @@ function renderWarn(){
         ${warnStep(k,0)}${warnStep(k,1)}
       </div>
     </div>`).join('');
+  const log=(S.violLog||[]);
+  if(log.length){
+    html+=`<div class="hr"></div><div class="small muted" style="margin-bottom:4px">Incidents &amp; consequences</div>`+
+      log.slice().reverse().map(v=>`<div class="small" style="padding:4px 0;border-bottom:1px solid var(--line)">
+        <b>${esc(v.label)}</b> — ${esc(teamName(v.team))} <span class="muted">(at ${v.score?v.score[0]+'–'+v.score[1]:''})</span>
+        <div style="color:var(--accent2)">→ ${esc(v.cons)}</div></div>`).join('');
+  }
   $('#warnTable').innerHTML=html;
 }
 function warnStep(k,t){
@@ -820,6 +856,7 @@ function renderCards(){
   $('#cardTable').innerHTML=`<table><tbody>${S.cards.map((c,i)=>`
     <tr><td><span class="tag ${tagcls[c.type]}">${tagtxt[c.type]}</span></td>
     <td><b>${esc(teamName(c.team))}</b><div class="small">${esc(c.player||'')}</div>
+    ${c.cons?`<div class="small" style="color:var(--accent2)">${esc(c.cons)}</div>`:''}
     <div class="small muted">${c.score?c.score[0]+'–'+c.score[1]:''}</div></td>
     <td><button class="btn sm danger" style="min-height:34px;padding:0 10px" onclick="delCard(${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
@@ -885,7 +922,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','
 function fillSetup(){
   $('#f_event').value=S.meta.event;$('#f_org').value=S.meta.org;$('#f_div').value=S.meta.div;
   $('#f_date').value=S.meta.date;$('#f_round').value=S.meta.round;$('#f_field').value=S.meta.field;$('#f_start').value=S.meta.start;
-  $('#f_gametotal').value=S.fmt.gameTotal;$('#f_halftarget').value=S.fmt.halfTarget;
+  $('#f_gametotal').value=S.fmt.gameTotal;$('#f_halftarget').value=S.fmt.halfTarget;$('#f_halflen').value=S.fmt.halfLen;
   $('#f_halfcap').value=S.fmt.halfCap??'';$('#f_softcap').value=S.fmt.softCap??'';$('#f_hardcap').value=S.fmt.hardCap??'';
   $('#f_to_half').value=S.to.perHalf;$('#f_to_float').value=S.to.floater;$('#f_to_len').value=S.to.len;
   $('#f_lim_line').value=S.lim.line;$('#f_lim_ready').value=S.lim.ready;$('#f_lim_pull').value=S.lim.pull;
@@ -962,7 +999,7 @@ function applyGame(g){
   if(g.home&&g.away){S.teams[0].name=g.home;S.teams[1].name=g.away;}
   else{S.teams[0].name='';S.teams[1].name='';}   // playoff: pick teams via roster dropdowns
   S.score=[0,0];S.points=[];S.half=1;
-  S.warn={offside:[0,0],falsestart:[0,0],time:[0,0]};S.cards=[];S._toLog=[];
+  S.warn={offside:[0,0],falsestart:[0,0],time:[0,0]};S.violLog=[];S.cards=[];S._toLog=[];
   S.capsFired={half:false,soft:false,hard:false};
   clearTimer();save();fillSetup();renderAll();
   $('#schedHelp').innerHTML=(g.bracket&&!(g.home&&g.away))
@@ -978,6 +1015,7 @@ function bindSetup(){
     ['#f_gametotal',v=>{S.fmt.gameTotal=+v||15;if(!$('#f_halftarget').value)S.fmt.halfTarget=Math.ceil(S.fmt.gameTotal/2);}],
     ['#f_halftarget',v=>S.fmt.halfTarget=+v||Math.ceil(S.fmt.gameTotal/2)],
     ['#f_halfcap',v=>S.fmt.halfCap=v===''?null:+v],['#f_softcap',v=>S.fmt.softCap=v===''?null:+v],['#f_hardcap',v=>S.fmt.hardCap=v===''?null:+v],
+    ['#f_halflen',v=>S.fmt.halfLen=+v||7],
     ['#f_to_half',v=>S.to.perHalf=+v||0],['#f_to_float',v=>S.to.floater=+v||0],['#f_to_len',v=>S.to.len=+v||70],
     ['#f_lim_line',v=>S.lim.line=+v],['#f_lim_ready',v=>S.lim.ready=+v],['#f_lim_pull',v=>S.lim.pull=+v],
     ['#f_lim_late',v=>S.lim.late=+v],['#f_lim_rpr',v=>S.lim.rpr=+v],['#f_lim_rpp',v=>S.lim.rpp=+v],
@@ -993,9 +1031,34 @@ function bindSetup(){
 /* ============================ MISC ACTIONS ============================ */
 function addCard(){
   const type=$('#card_type').value,team=+$('#card_team').value,player=$('#card_player').value.trim();
-  S.cards.push({type,team,player,ts:Date.now(),score:[...S.score]});
+  const rec={type,team,player,ts:Date.now(),score:[...S.score]};
+  S.cards.push(rec);
+  rec.cons=cardConsequence(type,team,player);   // computed after push so counts include this one
   $('#card_player').value='';
-  beep(1, type==='EJCT'?440:600);save();renderCards();renderSheet();flash('Recorded');
+  beep(1, type==='EJCT'?440:600);save();renderCards();renderSheet();
+  flash(({TECH:'Technical',TMF:'Team Misconduct (Blue)',PMF:'Personal Misconduct (Yellow)',EJCT:'Ejection (Red)'})[type]+' — '+teamName(team)+'\n→ '+rec.cons,7000);
+}
+function cardConsequence(type,team,player){
+  const who=player||'player';
+  if(type==='TECH'){
+    const n=S.cards.filter(c=>c.type==='TECH'&&c.team===team).length;
+    return n<3 ? `Tech #${n} — WARNING, no penalty (1st & 2nd are warnings)`
+               : `Tech #${n} — triggers a Misconduct Penalty (TMF / yardage) against ${teamName(team)}`;
+  }
+  if(type==='TMF') return `Team Misconduct Penalty (yardage) vs ${teamName(team)}: during play → yardage toward the end zone they defend; between points → disc at a brick mark. Captain may decline.`;
+  if(type==='PMF'){
+    const pn=S.cards.filter(c=>c.type==='PMF'&&c.team===team&&(c.player||'')===(player||'')).length;
+    let s=`Auto +1 TMF to ${teamName(team)}.`;
+    s+= pn>=2 ? ` 2nd PMF this game → ${who} is EJECTED for the rest of the game.`
+              : ` (3 PMFs in the tournament → tournament suspension.)`;
+    return s+forfeitNote(team);
+  }
+  if(type==='EJCT') return `${who} ejected for the game. Auto +1 TMF to ${teamName(team)}. Counts as 2 PMFs (tournament); a 2nd-half ejection carries to the next game's 1st half.`+forfeitNote(team);
+  return '';
+}
+function forfeitNote(team){
+  const eq=S.cards.filter(c=>c.type==='PMF'&&c.team===team).length + 2*S.cards.filter(c=>c.type==='EJCT'&&c.team===team).length;
+  return eq>=5 ? ` ⚠ ${teamName(team)} has ${eq} PMF-equivalents → team FORFEITS the game.` : '';
 }
 function exportJSON(){
   const data=JSON.stringify(S,null,2);
@@ -1015,6 +1078,7 @@ function summaryText(){
   [0,1].forEach(i=>{const t=S.teams[i];L.push(`${teamName(i)}: colour ${t.colour||'-'}, capt ${t.captain||'-'}, spirit ${t.spirit||'-'}, started ${t.startOD||'-'} on ${t.startSide||'-'}`);});
   L.push('');
   L.push(`Warnings (T1/T2): offsides ${S.warn.offside.join('/')}, false start ${S.warn.falsestart.join('/')}, time ${S.warn.time.join('/')}`);
+  if((S.violLog||[]).length){L.push('');L.push('Pull/time violations:');S.violLog.forEach(v=>L.push(` - ${v.label} (${teamName(v.team)}, ${v.score?v.score[0]+'-'+v.score[1]:''}) -> ${v.cons}`));}
   if(S.cards.length){L.push('');L.push('Misconduct:');S.cards.forEach(c=>L.push(` - ${({TECH:'Tech',TMF:'Blue',PMF:'Yellow',EJCT:'Red'})[c.type]} ${teamName(c.team)} ${c.player||''} (${c.score[0]}-${c.score[1]})`));}
   L.push('');
   L.push('Scoring:');
@@ -1085,8 +1149,10 @@ $('#btnStartClock').addEventListener('click',()=>{unlockAudio();startBetweenManu
 $('#btnSwapEnd').addEventListener('click',()=>{S.roleFlip=!S.roleFlip;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('Role flipped — now '+(amPull()?'PULL (80s)':'READINESS (60s)'));});
 $$('#obsEndSeg button').forEach(b=>b.addEventListener('click',()=>{S.obsEnd=+b.dataset.obsend;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('You are at '+endLabel(S.obsEnd));}));
 $$('[data-aux]').forEach(b=>b.addEventListener('click',()=>{unlockAudio();const s=+b.dataset.aux;
-  let ms=[];if(s===420)ms=[{at:120,label:'5 min'},{at:300,label:'2 min'}];else ms=[{at:s,label:s+'s'}];
-  startAux(s,b.textContent.trim().toUpperCase(),ms);}));
+  startAux(s,b.textContent.trim().toUpperCase(),[{at:s,label:s+'s'}]);}));
+$('#btnHalftime').addEventListener('click',()=>{unlockAudio();const mins=S.fmt.halfLen||7,base=mins*60;
+  const ms=[{at:base-120,label:'2 min left'},{at:base-60,label:'1 min left'}].filter(m=>m.at>0);
+  startAux(base,'HALFTIME ('+mins+' min)',ms);});
 $('#btnAddCard').addEventListener('click',addCard);
 $('#btnExport').addEventListener('click',exportJSON);
 $('#btnImport').addEventListener('click',()=>$('#fileImport').click());
