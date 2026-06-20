@@ -3,6 +3,7 @@
   "name": "East Coast Games 2026",
   "org": "Saint John, New Brunswick",
   "division": "Mixed",
+  "sideLabels": ["Rocks", "Forest"],
   "rules": {
     "gameTotal": 15,
     "halfTarget": 8,

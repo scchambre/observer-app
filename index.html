@@ -122,7 +122,7 @@
   .tag.tmf{background:#e6effb;border-color:#bcd3f0;color:#0a4fae;}
   .tag.pmf{background:#fff7df;border-color:#ecd99a;color:#7a5c00;}
   .tag.ejct{background:#fdecec;border-color:#e7a9a9;color:var(--bad);}
-  .flash{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100;background:#101418;color:#fff;
+  .flash{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:100;background:#101418;color:#fff;
     padding:12px 18px;border-radius:12px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);opacity:0;pointer-events:none;
     transition:opacity .2s;max-width:92%;text-align:center;white-space:pre-line;font-size:14px;line-height:1.35;}
   .flash.show{opacity:1;}
@@ -409,6 +409,7 @@ const DEF=()=>({
   violLog:[],           // {label,team,cons,score,ts}
   cards:[],             // {type,team,player,ts,score:[a,b]}
   capsFired:{half:false,soft:false,hard:false},
+  halfCapHit:false,
   notes:''
 });
 let S=load();
@@ -419,6 +420,7 @@ function save(){localStorage.setItem(KEY,JSON.stringify(S));}
 function applyPresetDefaults(s){
   s.meta.event=PRESET.name||s.meta.event;s.meta.org=PRESET.org||s.meta.org;
   if(PRESET.division)s.meta.div=PRESET.division;
+  if(PRESET.sideLabels)s.sideLabels=[...PRESET.sideLabels];
   const r=PRESET.rules;
   if(r){
     if(r.gameTotal!=null)s.fmt.gameTotal=r.gameTotal;if(r.halfTarget!=null)s.fmt.halfTarget=r.halfTarget;
@@ -462,6 +464,8 @@ function ratioForPoint(n){ // n = 1-indexed point number
   const A=S.ratio.A,B=A==='W'?'M':'W';
   return (Math.floor(n/2)%2===0)?A:B;
 }
+// Whether this is the 1st or 2nd point of its ABBA ratio run (pt 1 is a singleton "1st").
+function ratioSeq(n){return (n===1)?'1st':(n%2===0?'1st':'2nd');}
 function pointNo(){return S.score[0]+S.score[1]+1;}
 
 /* ---- end / pull-side tracking ----
@@ -518,17 +522,28 @@ function addGoal(by){
   const pullAt=(T&&T.kind==='point'&&T.pulled)?Math.round(T.pulledAt):null;
   S.score[by]++;
   S.points.push({n,by,ratio:r,after:[...S.score],viol:[],pullAt});
-  // halftime check
-  if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget)){
-    S.half=2; flash('Halftime target reached'); beep(2,660); notify('Halftime','Target '+S.fmt.halfTarget+' reached');
+  // Halftime: first team to the target, OR the half cap (e.g. 30 min) has passed.
+  let isHalftime=false;
+  if(S.half===1 && (S.score[0]>=S.fmt.halfTarget || S.score[1]>=S.fmt.halfTarget || S.halfCapHit)){
+    S.half=2; isHalftime=true;
   }
-  // game end check
-  if(S.score[0]>=S.fmt.gameTotal || S.score[1]>=S.fmt.gameTotal){
-    flash('Game total reached — game point/over'); beep(3,990);
-  }
+  const gameOver = (S.score[0]>=S.fmt.gameTotal || S.score[1]>=S.fmt.gameTotal);
+  if(gameOver){ flash('Game total reached — game point / over'); beep(3,990); }
   save();
-  startBetweenPoint();
+  if(isHalftime){ triggerHalftime(); }
+  else if(!gameOver){ startBetweenPoint(); }
+  else { clearTimer(); }
   renderAll();
+}
+function triggerHalftime(){
+  beep(2,660); notify('Halftime','Half is over — '+(S.fmt.halfLen||7)+' min break');
+  flash('⏸ HALFTIME — '+(S.fmt.halfLen||7)+'-min clock started',6000);
+  startHalftimeClock();
+}
+function startHalftimeClock(){
+  const mins=S.fmt.halfLen||7, base=mins*60;
+  const ms=[{at:base-120,label:'2 min left'},{at:base-60,label:'1 min left'}].filter(m=>m.at>0);
+  startAux(base,'HALFTIME ('+mins+' min)',ms);
 }
 // Start the between-point clock for the upcoming point, role derived from the end
 // the pull comes from vs. the observer's end.
@@ -640,10 +655,21 @@ function actTimeout(){
     T={kind:'timeout',startMs:Date.now(),team:t,offLimit:S.to.len,defBase:S.to.len+20,offSetAt:null,warned:[],stopped:false};
     saveTimer();beep(1,660);flash('Timeout (during play) — '+teamName(t));
   }else{
-    startAux(S.to.len,'TIMEOUT (between pts) — '+teamName(t),[{at:S.to.len,label:'resume'}]);
-    beep(1,660);flash('Between-points TO — '+teamName(t)+'\n'+S.to.len+'s suspension, then “Start point clock” to re-pull (readiness resets)',6500);
+    // Suspend the running between-point clock for 70s, then resume it where it left off
+    // (the deadline is pushed back by the timeout — counts are suspended, not restarted).
+    const susp=(T&&T.kind==='point')?Object.assign({},T,{suspAt:elapsed()}):null;
+    T={kind:'tobetween',startMs:Date.now(),team:t,base:S.to.len,suspended:susp,warned:[],stopped:false};
+    saveTimer();beep(1,660);
+    flash('Between-points TO — '+teamName(t)+'\n'+S.to.len+'s, then the point clock resumes where it left off',6000);
   }
   save();renderAll();
+}
+// Resume the suspended between-point clock after a between-points timeout.
+function resumeFromTO(){
+  const s=T&&T.suspended;
+  if(s){const r=Object.assign({},s);r.startMs=Date.now()-(s.suspAt||0)*1000;r.stopped=false;delete r.suspAt;T=r;flash('Point clock resumed');}
+  else{T=null;flash('Timeout ended');}
+  saveTimer();renderTimer();
 }
 function toDefLimit(){return (T&&T.offSetAt!=null)?Math.max(T.defBase,T.offSetAt+20):(T?T.defBase:0);}
 // Contextual primary button while a timeout is running: mark offence set, then end the timeout.
@@ -668,8 +694,8 @@ function renderTopScore(){
   $('#tm0').innerHTML=teamMeta(0);$('#tm1').innerHTML=teamMeta(1);
   $('#halfLbl').textContent='H'+S.half;
   $('#ptLbl').textContent='Pt '+pointNo();
-  const r=ratioForPoint(pointNo());
-  $('#ratioNow').innerHTML = r? `<span class="pill ${r==='W'?'w':'m'}">${ratioLabel(r)}</span>` :
+  const n=pointNo(), r=ratioForPoint(n);
+  $('#ratioNow').innerHTML = r? `<span class="pill ${r==='W'?'w':'m'}">${ratioLabel(r)}</span> <span class="pill" style="background:#fff">${ratioSeq(n)} pt</span>` :
     `<span class="pill">manual</span>`;
   // highlight receiving team (the one that did NOT score last)
   $('#tc0').classList.toggle('recv',receivingTeam()===0);
@@ -720,6 +746,18 @@ function renderTimer(){
     dl.className='deadline';dl.innerHTML='';
     $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${e>=m.at?'done':(m.at===nextMile(e)?'cur':'')}">${m.label}</span>`).join('');
     showPull('none');return;
+  }
+  if(T.kind==='tobetween'){ // between-points TO: 70s suspension, then point clock resumes
+    const rem=T.base-e;
+    box.className='timer run'+(rem<=0?' over':(rem<=12?' warnear':''));
+    $('#timerRole').textContent='TIMEOUT (between pts) — '+teamName(T.team);
+    $('#timerBig').textContent=fmtClock(rem);
+    $('#timerSub').textContent=rem>0?Math.ceil(rem)+'s — then the point clock resumes':'resuming…';
+    const s=T.suspended;
+    dl.className='deadline ok';dl.innerHTML=s?`point clock resumes at ${fmtClock(s.suspAt||0)} (${s.role})`:'no clock to resume';
+    $('#miles').innerHTML='';
+    showPull('');const pb2=$('#btnPull');pb2.style.width='100%';pb2.className='btn ghost';pb2.textContent='Resume now';
+    return;
   }
   if(T.kind==='timeout'){ // two phases: offence to set, defence to check in
     $('#timerRole').textContent='TIMEOUT — '+teamName(T.team)+(T.stopped?' (paused)':'');
@@ -962,7 +1000,7 @@ function renderTeamSetup(){
         <label class="fld"><span>Started end (defends)</span>${sideSel(i,t.startSide)}</label>
       </div>
     </div>`;}).join('');
-  $$('#teamSetup [data-team]').forEach(el=>el.addEventListener('input',e=>{
+  $$('#teamSetup [data-k]').forEach(el=>el.addEventListener('input',e=>{
     const i=+el.dataset.team,k=el.dataset.k,o=other(i);S.teams[i][k]=el.value;
     // Teams are complementary: setting one team's start O/D or end auto-fills the other.
     if(k==='startOD'&&(el.value==='O'||el.value==='D'))S.teams[o].startOD=(el.value==='O'?'D':'O');
@@ -996,9 +1034,13 @@ function applyGame(g){
   S.meta.event=PRESET.name;if(PRESET.org)S.meta.org=PRESET.org;if(PRESET.division)S.meta.div=PRESET.division;
   S.meta.date=g.date||S.meta.date;S.meta.start=g.time||'';S.meta.field=g.field||'';S.meta.round=g.round||'';
   applyPresetDefaults(S);                 // tournament rules (caps / timeouts / total / ratio method)
+  if(PRESET.sideLabels)S.sideLabels=[...PRESET.sideLabels];
+  // Reset per-game team details (carry nothing over from the previous game).
+  [0,1].forEach(i=>{S.teams[i].captain='';S.teams[i].spirit='';S.teams[i].colour='';S.teams[i].startOD='';S.teams[i].startSide='';});
   if(g.home&&g.away){S.teams[0].name=g.home;S.teams[1].name=g.away;}
   else{S.teams[0].name='';S.teams[1].name='';}   // playoff: pick teams via roster dropdowns
-  S.score=[0,0];S.points=[];S.half=1;
+  S.roleFlip=false;
+  S.score=[0,0];S.points=[];S.half=1;S.halfCapHit=false;
   S.warn={offside:[0,0],falsestart:[0,0],time:[0,0]};S.violLog=[];S.cards=[];S._toLog=[];
   S.capsFired={half:false,soft:false,hard:false};
   clearTimer();save();fillSetup();renderAll();
@@ -1060,12 +1102,25 @@ function forfeitNote(team){
   const eq=S.cards.filter(c=>c.type==='PMF'&&c.team===team).length + 2*S.cards.filter(c=>c.type==='EJCT'&&c.team===team).length;
   return eq>=5 ? ` ⚠ ${teamName(team)} has ${eq} PMF-equivalents → team FORFEITS the game.` : '';
 }
-function exportJSON(){
+function exportName(){
+  const m=S.meta;
+  const parts=['observer',m.date||'',m.round||'',(m.field||'').replace(/\s+/g,''),(m.start||'').replace(':',''),teamName(0)+'-v-'+teamName(1)];
+  return parts.filter(Boolean).join('_').replace(/[^\w.\-]+/g,'-')+'.json';
+}
+async function exportJSON(){
   const data=JSON.stringify(S,null,2);
+  const fname=exportName();
+  // On iOS the share sheet offers "Save to Files"; fall back to a normal download elsewhere.
+  try{
+    const file=new File([data],fname,{type:'application/json'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:fname});
+      flash('Shared / saved',3000);return;
+    }
+  }catch(e){ if(e&&e.name==='AbortError')return; }
   const blob=new Blob([data],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='observer_'+(S.meta.event||'game').replace(/\W+/g,'_')+'_'+(S.meta.date||'')+'.json';
-  a.click();
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;a.click();
+  flash('Downloaded '+fname,4500);
 }
 function summaryText(){
   const L=[];const m=S.meta;
@@ -1098,6 +1153,9 @@ function tick(){
         if(e>=m.at && e<m.at+0.6 && !T.warned.includes('m'+m.at)){T.warned.push('m'+m.at);beep(2,760);flash(m.label);saveTimer();}
       });
       if(e>=T.base && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);notify('Time up',T.role);flash('Time up: '+T.role);saveTimer();}
+    }else if(T.kind==='tobetween'){ // 70s suspension; warn then auto-resume the point clock
+      [20,10].forEach(l=>{const m=T.base-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('r'+l)){T.warned.push('r'+l);beep(1,760);flash(l+'s to resume');saveTimer();}});
+      if(e>=T.base && !T.warned.includes('done')){T.warned.push('done');beep(2,660);resumeFromTO();}
     }else if(T.kind==='timeout'){ // offence-to-set + defence-to-check warnings
       if(T.offSetAt==null){
         [20,10].forEach(l=>{const m=T.offLimit-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('off'+l)){T.warned.push('off'+l);beep(l===10?2:1,l===10?990:760);flash(l+'s — offence to set');saveTimer();}});
@@ -1123,8 +1181,10 @@ function tick(){
   if(startMs){
     const checkCap=(min,key,label)=>{
       if(min==null)return;const target=startMs+min*60000;
-      if(Date.now()>=target && !S.capsFired[key]){S.capsFired[key]=true;save();
-        beep(3,440);notify(label+' cap reached',label+' time has elapsed');flash('⏰ '+label+' cap reached');}
+      if(Date.now()>=target && !S.capsFired[key]){S.capsFired[key]=true;
+        if(key==='half'&&S.half===1){S.halfCapHit=true;flash('⏰ Half cap — halftime after this point',6000);}
+        else flash('⏰ '+label+' cap reached');
+        save();beep(3,440);notify(label+' cap reached',label+' time has elapsed');}
     };
     checkCap(S.fmt.halfCap,'half','Half');
     checkCap(S.fmt.softCap,'soft','Soft');
@@ -1135,7 +1195,7 @@ function tick(){
 
 /* ============================ EVENTS ============================ */
 $$('.scoreplus').forEach(b=>b.addEventListener('click',()=>{unlockAudio();addGoal(+b.dataset.score);}));
-$('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeout')actTimeoutBtn();else actPull();});
+$('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeout')actTimeoutBtn();else if(T&&T.kind==='tobetween')resumeFromTO();else actPull();});
 $('#btnReady').addEventListener('click',actReady);
 $('#btnLate20').addEventListener('click',actLate20);
 $('#btnRepull').addEventListener('click',actRepull);
@@ -1150,9 +1210,9 @@ $('#btnSwapEnd').addEventListener('click',()=>{S.roleFlip=!S.roleFlip;save();if(
 $$('#obsEndSeg button').forEach(b=>b.addEventListener('click',()=>{S.obsEnd=+b.dataset.obsend;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('You are at '+endLabel(S.obsEnd));}));
 $$('[data-aux]').forEach(b=>b.addEventListener('click',()=>{unlockAudio();const s=+b.dataset.aux;
   startAux(s,b.textContent.trim().toUpperCase(),[{at:s,label:s+'s'}]);}));
-$('#btnHalftime').addEventListener('click',()=>{unlockAudio();const mins=S.fmt.halfLen||7,base=mins*60;
-  const ms=[{at:base-120,label:'2 min left'},{at:base-60,label:'1 min left'}].filter(m=>m.at>0);
-  startAux(base,'HALFTIME ('+mins+' min)',ms);});
+$('#btnHalftime').addEventListener('click',()=>{unlockAudio();
+  if(S.half===1){S.half=2;save();renderTopScore();}   // manual halftime marker
+  startHalftimeClock();flash('Halftime started');});
 $('#btnAddCard').addEventListener('click',addCard);
 $('#btnExport').addEventListener('click',exportJSON);
 $('#btnImport').addEventListener('click',()=>$('#fileImport').click());
