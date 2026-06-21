@@ -180,10 +180,12 @@
       <!-- contextual button: only shown during a timeout (offence-set / resume) -->
       <button class="btn primary" id="btnPull" style="width:100%;margin-top:10px;display:none">Pull released ⏺</button>
 
-      <div class="grid2" style="margin-top:8px">
-        <button class="btn sm ghost" id="btnTimeout">Timeout</button>
-        <button class="btn sm ghost" id="btnUndo">Undo goal</button>
+      <div class="small muted" style="margin-top:10px;margin-bottom:4px">Timeout for…</div>
+      <div class="grid2">
+        <button class="btn sm ghost" id="btnTO0">Team 1</button>
+        <button class="btn sm ghost" id="btnTO1">Team 2</button>
       </div>
+      <button class="btn sm ghost" id="btnUndo" style="width:100%;margin-top:8px">Undo goal</button>
     </div>
 
     <div class="panel" style="padding:10px">
@@ -414,8 +416,14 @@ const DEF=()=>({
   notes:''
 });
 let S=load();
-function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.teams)return Object.assign(DEF(),v);}catch(e){}
-  const d=DEF();if(PRESET)applyPresetDefaults(d);return d;}
+function load(){
+  let s;
+  try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&v.teams)s=Object.assign(DEF(),v);}catch(e){}
+  if(!s){s=DEF();if(PRESET)applyPresetDefaults(s);}
+  // Event pages hardcode their end labels (e.g. ECG = Rocks/Forest), even for saved games.
+  if(PRESET&&PRESET.sideLabels)s.sideLabels=[...PRESET.sideLabels];
+  return s;
+}
 function save(){localStorage.setItem(KEY,JSON.stringify(S));}
 // Seed event-wide defaults (name, division, rules) for an event page on first visit.
 function applyPresetDefaults(s){
@@ -655,8 +663,8 @@ function violConsequence(kind,t){
     : 'a team timeout is assessed (+ time extension). No TOs left → receiving: disc at midpoint of the end zone they defend; pulling: receiving starts at midfield';
 }
 
-function actTimeout(){
-  const t=pickTeamPrompt('Timeout for which team?');
+function actTimeout(t){
+  if(t==null)t=pickTeamPrompt('Timeout for which team?');
   if(t==null)return;
   const duringPlay=confirm('During-play timeout?\n\nOK = during play — offence sets by '+S.to.len+'s, defence checks the disc in by '+(S.to.len+20)+'s.\n\nCancel = between points (before the pull) — '+S.to.len+'s suspension, then re-signal readiness & re-pull.');
   S._toLog=S._toLog||[];
@@ -742,6 +750,7 @@ function renderDash(){
 
 function renderTopScore(){
   $('#tn0').textContent=teamName(0);$('#tn1').textContent=teamName(1);
+  $('#btnTO0').textContent=teamName(0);$('#btnTO1').textContent=teamName(1);
   $('#ts0').textContent=S.score[0];$('#ts1').textContent=S.score[1];
   $('#tm0').innerHTML=teamMeta(0);$('#tm1').innerHTML=teamMeta(1);
   $('#halfLbl').textContent='H'+S.half;
@@ -1236,7 +1245,8 @@ $('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeou
 $('#btnOffside').addEventListener('click',()=>logViol('offside'));
 $('#btnFalse').addEventListener('click',()=>logViol('falsestart'));
 $('#btnTimeV').addEventListener('click',()=>logViol('time'));
-$('#btnTimeout').addEventListener('click',actTimeout);
+$('#btnTO0').addEventListener('click',()=>actTimeout(0));
+$('#btnTO1').addEventListener('click',()=>actTimeout(1));
 $('#btnUndo').addEventListener('click',undoGoal);
 $('#btnStartClock').addEventListener('click',()=>{unlockAudio();startBetweenManual();renderRole();});
 $('#btnSwapEnd').addEventListener('click',()=>{S.roleFlip=!S.roleFlip;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('Role flipped — now '+(amPull()?'PULL (80s)':'READINESS (60s)'));});
