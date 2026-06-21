@@ -111,7 +111,10 @@ final class GameState: ObservableObject {
         mode = .half; auxBase = Double(halfLen * 60); clockStart = Date(); fired.removeAll(); startTicking(); save()
     }
     func startTimeout() {
-        mode = .timeout; auxBase = Double(toLen); clockStart = Date(); fired.removeAll(); startTicking(); save()
+        // Between-points TO: count down (toLen − elapsed-at-call); when 0, the regular
+        // 60/80 window begins. So the regular window restarts toLen sec after the goal.
+        let E = (mode == .point) ? elapsed() : 0
+        mode = .timeout; auxBase = max(0, Double(toLen) - E); clockStart = Date(); fired.removeAll(); startTicking(); save()
     }
     func stop() { ticker?.invalidate(); ticker = nil; mode = .none; clockStart = nil; save() }
     func resetGame() { score = [0, 0]; points = []; half = 1; stop() }
@@ -136,7 +139,10 @@ final class GameState: ObservableObject {
                 let m = auxBase - lead, k = "a\(Int(lead))"
                 if m > 0, e >= m, !fired.contains(k) { fired.insert(k); WKInterfaceDevice.current().play(.notification) }
             }
-            if e >= auxBase, !fired.contains("end") { fired.insert("end"); WKInterfaceDevice.current().play(.failure) }
+            if e >= auxBase, !fired.contains("end") {
+                fired.insert("end"); WKInterfaceDevice.current().play(.failure)
+                if mode == .timeout { startBetweenPoint() }   // regular 60/80 window begins
+            }
         }
     }
     private func roleChanged() {
@@ -253,7 +259,8 @@ struct ContentView: View {
                     Text(game.mode == .half ? "HALFTIME" : "TIMEOUT").font(.caption2).foregroundStyle(.secondary)
                     Text(clockString(max(0, rem))).font(.system(size: 40, weight: .bold, design: .rounded)).monospacedDigit()
                         .foregroundStyle(rem <= 0 ? .red : .primary)
-                    Text(rem > 0 ? "remaining" : "time up").font(.caption2).foregroundStyle(.secondary)
+                    Text(game.mode == .timeout ? "until regular window" : (rem > 0 ? "remaining" : "time up"))
+                        .font(.caption2).foregroundStyle(.secondary)
                 case .none:
                     Text("no point running").font(.caption2).foregroundStyle(.secondary)
                     Text("–:–").font(.system(size: 40, weight: .bold, design: .rounded))

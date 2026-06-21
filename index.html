@@ -177,21 +177,11 @@
         <div class="miles" id="miles"></div>
       </div>
 
-      <button class="btn primary" id="btnPull" style="width:100%;margin-top:10px">Pull released ⏺</button>
+      <!-- contextual button: only shown during a timeout (offence-set / resume) -->
+      <button class="btn primary" id="btnPull" style="width:100%;margin-top:10px;display:none">Pull released ⏺</button>
 
-      <div class="grid3" style="margin-top:8px">
-        <button class="btn sm ghost" id="btnReady">Readiness ✋</button>
-        <button class="btn sm ghost" id="btnLate20">Late ready →20s</button>
-        <button class="btn sm ghost" id="btnRepull">Re-pull</button>
-      </div>
-      <div class="grid3" style="margin-top:8px">
-        <button class="btn sm ghost" id="btnOffside">Offsides</button>
-        <button class="btn sm ghost" id="btnFalse">False start</button>
-        <button class="btn sm ghost" id="btnTimeV">Time viol.</button>
-      </div>
-      <div class="grid3" style="margin-top:8px">
+      <div class="grid2" style="margin-top:8px">
         <button class="btn sm ghost" id="btnTimeout">Timeout</button>
-        <button class="btn sm ghost" id="btnStop">Stop clock</button>
         <button class="btn sm ghost" id="btnUndo">Undo goal</button>
       </div>
     </div>
@@ -335,8 +325,13 @@
 
     <div class="panel">
       <h2>Warnings (pull violations &amp; time)</h2>
+      <div class="grid3" style="margin-bottom:10px">
+        <button class="btn sm ghost" id="btnOffside">Offsides</button>
+        <button class="btn sm ghost" id="btnFalse">False start</button>
+        <button class="btn sm ghost" id="btnTimeV">Time viol.</button>
+      </div>
       <div id="warnTable"></div>
-      <div class="help">Offsides + false start + majority-pull = “pull violations”. First in each category is a warning; repeats escalate per rules.</div>
+      <div class="help">Tap to log a violation (with its consequence). Offsides → pulling team; false start → receiving team. Offsides + false start = “pull violations”; first is a warning, repeats escalate.</div>
     </div>
 
     <div class="panel">
@@ -672,22 +667,18 @@ function actTimeout(){
     T={kind:'timeout',startMs:Date.now(),team:t,offLimit:S.to.len,defBase:S.to.len+20,offSetAt:null,warned:[],stopped:false};
     saveTimer();beep(1,660);flash('Timeout (during play) — '+teamName(t));
   }else{
-    // Suspend the running between-point clock for 70s, then resume it where it left off
-    // (the deadline is pushed back by the timeout — counts are suspended, not restarted).
-    const susp=(T&&T.kind==='point')?Object.assign({},T,{suspAt:elapsed()}):null;
-    T={kind:'tobetween',startMs:Date.now(),team:t,base:S.to.len,suspended:susp,warned:[],stopped:false};
+    // Between-points TO. The regular post-point window restarts 70s after the GOAL, so the
+    // timeout counts down (toLen − elapsed-at-call); when it hits 0 a fresh 60/80 begins.
+    const E=(T&&T.kind==='point')?elapsed():0;
+    const base=Math.max(0,S.to.len-E);
+    T={kind:'tobetween',startMs:Date.now(),team:t,base,calledAt:Math.round(E),warned:[],stopped:false};
     saveTimer();beep(1,660);
-    flash('Between-points TO — '+teamName(t)+'\n'+S.to.len+'s, then the point clock resumes where it left off',6000);
+    flash('Between-points TO — '+teamName(t)+'\n'+Math.round(base)+'s, then the regular 60/80 window',6000);
   }
   save();renderAll();
 }
-// Resume the suspended between-point clock after a between-points timeout.
-function resumeFromTO(){
-  const s=T&&T.suspended;
-  if(s){const r=Object.assign({},s);r.startMs=Date.now()-(s.suspAt||0)*1000;r.stopped=false;delete r.suspAt;T=r;flash('Point clock resumed');}
-  else{T=null;flash('Timeout ended');}
-  saveTimer();renderTimer();
-}
+// End of a between-points timeout → start a fresh between-point clock (regular 60/80).
+function resumeFromTO(){startBetweenPoint();flash('Regular post-point window started');}
 function toDefLimit(){return (T&&T.offSetAt!=null)?Math.max(T.defBase,T.offSetAt+20):(T?T.defBase:0);}
 // Contextual primary button while a timeout is running: mark offence set, then end the timeout.
 function actTimeoutBtn(){
@@ -808,16 +799,15 @@ function renderTimer(){
     $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${e>=m.at?'done':(m.at===nextMile(e)?'cur':'')}">${m.label}</span>`).join('');
     showPull('none');return;
   }
-  if(T.kind==='tobetween'){ // between-points TO: 70s suspension, then point clock resumes
-    const rem=T.base-e;
+  if(T.kind==='tobetween'){ // between-points TO: count down, then the regular 60/80 window
+    const rem=T.base-e, pull=amPull();
     box.className='timer run'+(rem<=0?' over':(rem<=12?' warnear':''));
     $('#timerRole').textContent='TIMEOUT (between pts) — '+teamName(T.team);
     $('#timerBig').textContent=fmtClock(rem);
-    $('#timerSub').textContent=rem>0?Math.ceil(rem)+'s — then the point clock resumes':'resuming…';
-    const s=T.suspended;
-    dl.className='deadline ok';dl.innerHTML=s?`point clock resumes at ${fmtClock(s.suspAt||0)} (${s.role})`:'no clock to resume';
+    $('#timerSub').textContent=rem>0?Math.ceil(rem)+'s until the regular post-point window':'starting regular window…';
+    dl.className='deadline ok';dl.innerHTML=`then a fresh ${pull?S.lim.pull+'s pull':S.lim.ready+'s readiness'} window`;
     $('#miles').innerHTML='';
-    showPull('');const pb2=$('#btnPull');pb2.style.width='100%';pb2.className='btn ghost';pb2.textContent='Resume now';
+    showPull('');const pb2=$('#btnPull');pb2.style.width='100%';pb2.className='btn ghost';pb2.textContent='Start regular window now';
     return;
   }
   if(T.kind==='timeout'){ // two phases: offence to set, defence to check in
@@ -840,21 +830,7 @@ function renderTimer(){
     else{pb2.textContent='Disc checked in — end timeout';pb2.className='btn ghost';}
     return;
   }
-  showPull('');
-  if(T.pulled){ // pull released — interval over, clock frozen
-    pb.textContent='✓ Pulled '+fmtClock(T.pulledAt)+' — tap to undo';pb.className='btn pulled';pb.style.width='100%';
-    const lim=Math.round(T.pullLimit||S.lim.pull),onTime=T.pulledAt<=lim;
-    $('#timerRole').textContent='✓ PULLED — '+teamName(T.team);
-    $('#timerBig').textContent=fmtClock(T.pulledAt);
-    $('#timerSub').textContent='pull released · point in play';
-    dl.className='deadline '+(onTime?'ok':'over');
-    dl.innerHTML=onTime?`pull on time <span class="lim">(${Math.round(T.pulledAt)}s ≤ ${lim}s)</span>`
-                       :`pull LATE <span class="lim">(${Math.round(T.pulledAt)}s &gt; ${lim}s limit)</span>`;
-    box.className='timer pulled';
-    $('#miles').innerHTML=(T.milestones||[]).map(m=>`<span class="mile ${T.pulledAt>=m.at?'done':''}">${m.label}</span>`).join('');
-    return;
-  }
-  pb.textContent='Pull released ⏺';pb.className='btn primary';pb.style.width='100%';
+  showPull('none');   // no pull-released button — pull is assumed
   // BETWEEN-POINT: big number = elapsed stopwatch (always running until next goal)
   const rem=T.deadline-e;
   $('#timerRole').textContent=T.role+' — '+teamName(T.team)+(T.stopped?' (paused)':'');
@@ -1215,7 +1191,7 @@ function tick(){
       });
       if(e>=T.base && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);notify('Time up',T.role);flash('Time up: '+T.role);saveTimer();}
     }else if(T.kind==='tobetween'){ // 70s suspension; warn then auto-resume the point clock
-      [20,10].forEach(l=>{const m=T.base-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('r'+l)){T.warned.push('r'+l);beep(1,760);flash(l+'s to resume');saveTimer();}});
+      [20,10].forEach(l=>{const m=T.base-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('r'+l)){T.warned.push('r'+l);beep(1,760);flash(l+'s until regular window');saveTimer();}});
       if(e>=T.base && !T.warned.includes('done')){T.warned.push('done');beep(2,660);resumeFromTO();}
     }else if(T.kind==='timeout'){ // offence-to-set + defence-to-check warnings
       if(T.offSetAt==null){
@@ -1256,15 +1232,11 @@ function tick(){
 
 /* ============================ EVENTS ============================ */
 $$('.scoreplus').forEach(b=>b.addEventListener('click',()=>{unlockAudio();addGoal(+b.dataset.score);}));
-$('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeout')actTimeoutBtn();else if(T&&T.kind==='tobetween')resumeFromTO();else actPull();});
-$('#btnReady').addEventListener('click',actReady);
-$('#btnLate20').addEventListener('click',actLate20);
-$('#btnRepull').addEventListener('click',actRepull);
+$('#btnPull').addEventListener('click',()=>{unlockAudio();if(T&&T.kind==='timeout')actTimeoutBtn();else if(T&&T.kind==='tobetween')resumeFromTO();});
 $('#btnOffside').addEventListener('click',()=>logViol('offside'));
 $('#btnFalse').addEventListener('click',()=>logViol('falsestart'));
 $('#btnTimeV').addEventListener('click',()=>logViol('time'));
 $('#btnTimeout').addEventListener('click',actTimeout);
-$('#btnStop').addEventListener('click',()=>{ if(T&&T.stopped){T.stopped=false;T.startMs=Date.now()-(T.stopElapsed*1000);saveTimer();flash('Clock resumed');}else{stopTimer();flash('Clock stopped');} });
 $('#btnUndo').addEventListener('click',undoGoal);
 $('#btnStartClock').addEventListener('click',()=>{unlockAudio();startBetweenManual();renderRole();});
 $('#btnSwapEnd').addEventListener('click',()=>{S.roleFlip=!S.roleFlip;save();if(T&&T.kind==='point')startBetweenPoint();renderAll();flash('Role flipped — now '+(amPull()?'PULL (80s)':'READINESS (60s)'));});
