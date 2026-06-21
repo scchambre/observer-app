@@ -840,21 +840,17 @@ function renderTimer(){
     return;
   }
   showPull('none');   // no pull-released button — pull is assumed
-  // BETWEEN-POINT: big number = elapsed stopwatch (always running until next goal)
-  const rem=T.deadline-e;
+  // BETWEEN-POINT: a plain stopwatch counting the length of the point. The limit is shown
+  // only as a passive reference (no "overdue" alarm — the pull has usually already gone up).
+  const over=e-T.deadline, lim=Math.round(T.deadline);
   $('#timerRole').textContent=T.role+' — '+teamName(T.team)+(T.stopped?' (paused)':'');
   $('#timerBig').textContent=fmtClock(e);
-  $('#timerSub').textContent='elapsed since goal'+(T.readyAt!=null?' · ready ✓ '+fmtClock(T.readyAt):'');
-  // deadline countdown line
-  const what=T.role==='PULL'?'to pull':'for a hand';
-  dl.className='deadline '+(rem<=0?'over':(rem<=12?'warn':'ok'));
-  const relayMark=T.role==='READY'?`<span class="relay">other observer's pull due at ${S.lim.pull}s</span>`:'';
-  dl.innerHTML = rem>0
-    ? `${Math.ceil(rem)}s ${what} <span class="lim">(limit ${Math.round(T.deadline)}s)</span>${relayMark}`
-    : `OVERDUE +${fmtClock(-rem).replace('+','')} <span class="lim">${what}</span>${relayMark}`;
-  box.className='timer run'+(rem<=0?' over':(rem<=12?' warnear':''));
-  if(T.stopped)box.classList.add('warnear');
-  // milestones vs elapsed (situational awareness for both teams)
+  $('#timerSub').textContent='length of point';
+  dl.className='deadline '+(over>0?'warn':'ok');
+  dl.innerHTML = over>0
+    ? `<span class="lim">${lim}s ${T.role==='PULL'?'pull':'readiness'} limit · </span>+${Math.round(over)}s over`
+    : `<span class="lim">${lim}s ${T.role==='PULL'?'pull':'readiness'} limit</span>`;
+  box.className='timer run'+(T.stopped?' warnear':'');
   $('#miles').innerHTML=(T.milestones||[]).map(m=>{
     const cls=e>=m.at?'done':(m.at===nextMile(e)?'cur':'');
     return `<span class="mile ${cls}">${m.label}</span>`;
@@ -1210,17 +1206,7 @@ function tick(){
       const dlim=toDefLimit();
       [20,10].forEach(l=>{const m=dlim-l;if(m>0&&e>=m&&e<m+0.6&&!T.warned.includes('def'+l)){T.warned.push('def'+l);beep(l===10?2:1,l===10?990:760);flash(l+'s — defence to check in');saveTimer();}});
       if(e>=dlim&&!T.warned.includes('defFIN')){T.warned.push('defFIN');beep(3,440);notify('Defence check overdue',teamName(T.team));flash('Defence check-in overdue');saveTimer();}
-    }else{ // between-point: warn 20s & 10s before MY deadline, then at the deadline
-      const what=T.role==='PULL'?'to pull':'for a hand';
-      [20,10].forEach(lead=>{
-        const mark=T.deadline-lead;
-        if(mark>0 && e>=mark && e<mark+0.6 && !T.warned.includes('d'+lead)){
-          T.warned.push('d'+lead);beep(lead===10?2:1, lead===10?990:760);flash(lead+'s '+what);saveTimer();
-        }
-      });
-      if(e>=T.deadline && !T.warned.includes('FIN')){T.warned.push('FIN');beep(3,520);
-        notify('Time violation',T.role+' — '+teamName(T.team));flash('OVERDUE — '+what);saveTimer();}
-    }
+    } // between-point: silent stopwatch — no deadline alarms (timing is done on the watch)
   }
   // caps
   const startMs=startWallMs();
